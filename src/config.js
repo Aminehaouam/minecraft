@@ -35,7 +35,7 @@ function readJson (file) {
 function applyEnv (config, env) {
   const out = { ...config }
   if (env.MC_HOST) out.host = env.MC_HOST
-  if (env.MC_PORT) out.port = Number(env.MC_PORT)
+  if (env.MC_PORT) out.port = env.MC_PORT === 'auto' ? 'auto' : Number(env.MC_PORT)
   if (env.MC_USERNAME) out.username = env.MC_USERNAME
   if (env.MC_AUTH) out.auth = env.MC_AUTH
   if (env.MC_VERSION) out.version = env.MC_VERSION
@@ -47,7 +47,10 @@ function applyEnv (config, env) {
 
 function validate (config) {
   if (!config.host) throw new Error('config: "host" is required')
-  if (!Number.isInteger(config.port)) throw new Error('config: "port" must be a whole number')
+  // "auto" means: find the LAN world by listening for its broadcast.
+  if (config.port !== 'auto' && !Number.isInteger(config.port)) {
+    throw new Error('config: "port" must be a whole number, or "auto"')
+  }
   if (!config.username) throw new Error('config: "username" is required')
   if (!Array.isArray(config.commandPrefixes) || config.commandPrefixes.length === 0) {
     throw new Error('config: "commandPrefixes" must be a non-empty array')

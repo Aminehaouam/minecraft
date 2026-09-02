@@ -6,8 +6,8 @@ const configLoader = require('../src/config')
 
 test('loads defaults from config.example.json', () => {
   const config = configLoader.load({})
-  assert.strictEqual(config.host, 'localhost')
-  assert.strictEqual(config.port, 25565)
+  assert.strictEqual(config.host, 'auto', 'LAN discovery is the out-of-the-box default')
+  assert.strictEqual(config.port, 'auto')
   assert.ok(config.commandPrefixes.includes('bot'))
   assert.strictEqual(typeof config.survival.autoEat, 'boolean')
 })
@@ -23,6 +23,13 @@ test('environment variables override the files', () => {
   assert.strictEqual(config.port, 25566)
   assert.strictEqual(config.username, 'Buddy')
   assert.deepStrictEqual(config.owners, ['Alice', 'Bob'])
+})
+
+test('an explicit host and port still win', () => {
+  const config = configLoader.load({ MC_HOST: 'mc.example.com', MC_PORT: '25565' })
+  assert.strictEqual(config.host, 'mc.example.com')
+  assert.strictEqual(config.port, 25565)
+  assert.strictEqual(configLoader.load({ MC_PORT: 'auto' }).port, 'auto')
 })
 
 test('merge only overrides the keys it names', () => {

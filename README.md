@@ -16,96 +16,112 @@ to pay for.
 
 ---
 
-## 1. Requirements
+## Quick start (one click)
 
-- **Node.js 18 or newer** (22 recommended) — https://nodejs.org (the LTS installer is fine).
-  Check with `node --version`.
-- **Minecraft: Java Edition** (Bedrock/Pocket/console editions will not work).
-- A world the bot can reach: an open-to-LAN singleplayer world, or a server you run.
+1. **Download this project** — green **Code** button → **Download ZIP** → unzip it
+   (or `git clone` it if you prefer).
+2. **Open your world to LAN** — load your world in Minecraft, press `Esc` →
+   **Open to LAN** → **Start LAN World**.
+3. **Double-click the launcher** in the unzipped folder:
+   - **Windows** → `start.bat`
+   - **macOS** → `start.command`
+   - **Linux** → `start.sh` (or `./start.sh` in a terminal)
 
-## 2. Install
+That's it. The launcher installs what it needs on first run, writes its own config, finds
+your LAN world, and the bot walks up to you a few seconds later.
+
+```
+  ┌────────────────────────────────────────────┐
+  │        Minecraft Companion Bot             │
+  └────────────────────────────────────────────┘
+  First run — installing the libraries the bot needs.
+  (about a minute, only ever happens once)
+
+  Libraries installed.
+  Created config.json with default settings.
+  Nothing to fill in: the bot finds your LAN world by itself.
+
+[18:49:13] INFO  looking for a Minecraft world opened to LAN...
+[18:49:14] INFO  found "Amine's World" at 192.168.1.42:54321
+[18:49:14] INFO  spawned at (311, 21, 47) (version 1.20.4)
+```
+
+**You never have to look up the LAN port.** Minecraft broadcasts it on your network every
+couple of seconds, and the bot listens for that. Re-open the world tomorrow, get a
+different port, double-click the same file — it still works. Close the window (or
+`Ctrl+C`) to stop the bot.
+
+The only thing not bundled is **Node.js**, the runtime the bot needs. If it is missing,
+the launcher offers to install it (winget on Windows, Homebrew on macOS) or opens
+[nodejs.org](https://nodejs.org) for you — install it, then double-click the launcher
+again.
+
+### First thing to try in game
+
+```
+bot follow me
+bot help
+```
+
+And hand it a tool, since it is slow bare-handed (needs cheats enabled on the LAN world):
+
+```
+/give CompanionBot minecraft:iron_pickaxe
+/give CompanionBot minecraft:iron_sword
+/give CompanionBot minecraft:cooked_beef 16
+bot equip iron pickaxe
+```
+
+## Running it from a terminal instead
 
 ```bash
-git clone <this repo>
-cd minecraft
 npm install
-```
-
-## 3. Configure
-
-Copy the example config and edit it:
-
-```bash
-cp config.example.json config.json
-```
-
-```jsonc
-{
-  "host": "localhost",   // server address; for LAN use the IP shown in chat
-  "port": 25565,         // the port your world/server is listening on
-  "username": "CompanionBot", // the bot's in-game name
-  "auth": "offline",     // "offline" for LAN/cracked servers, "microsoft" for online-mode
-  "version": null,       // null = auto-detect, or pin it: "1.20.4"
-  "commandPrefixes": ["bot,", "bot", "!bot", "@bot"],
-  "owners": []           // [] = anyone may command the bot; ["YourName"] = only you
-}
-```
-
-`config.json` is git-ignored, so your server details stay private. Anything you leave out
-falls back to `config.example.json`. Environment variables win over both, which is handy
-for a quick test:
-
-```bash
-MC_HOST=192.168.1.42 MC_PORT=54321 MC_USERNAME=Buddy npm start
-```
-
-Supported variables: `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_VERSION`,
-`MC_PASSWORD`, `BOT_OWNERS`, `BOT_LOG_LEVEL`.
-
-## 4. Let the bot into your world
-
-**Singleplayer, open to LAN (easiest):**
-
-1. Load your world, press `Esc` → **Open to LAN**.
-2. Set **Allow Cheats: ON** (optional, but lets you `/give` the bot tools) and
-   **Game Mode: Survival**, then **Start LAN World**.
-3. Minecraft prints `Local game hosted on port 54321` in chat — put that number in
-   `config.json` as `port`, and keep `host` as `localhost` if the bot runs on the same PC.
-4. LAN worlds are offline-mode, so keep `"auth": "offline"`.
-
-> The port changes every time you re-open the world to LAN, so update `port` each session
-> (or pass `MC_PORT=...` on the command line).
-
-**Your own server (`server.jar`, Paper, Spigot):**
-
-1. In `server.properties`, note the `server-port` (default `25565`).
-2. If `online-mode=true`, the bot needs a real Microsoft account: set `"auth": "microsoft"`
-   and `"username"` to that account's email — a browser sign-in code appears in the terminal
-   on first launch. For a private LAN server it is simpler to set `online-mode=false` and
-   keep `"auth": "offline"`.
-3. If `white-list=true`, whitelist the bot: `/whitelist add CompanionBot` from the console
-   or in-game, then `/whitelist reload`.
-
-## 5. Run it
-
-```bash
 npm start
 ```
 
-You should see:
+`npm start` behaves exactly like the launcher, minus the setup checks.
 
+## Configuration
+
+`config.json` is created for you on first run and is git-ignored, so your server details
+stay private. Everything in it is optional — anything you leave out falls back to
+`config.example.json`.
+
+```jsonc
+{
+  "host": "auto",              // "auto" = find the LAN world; or "localhost" / an IP
+  "port": "auto",              // "auto" = read the port from Minecraft's LAN broadcast
+  "username": "CompanionBot",  // the bot's in-game name
+  "auth": "offline",           // "offline" for LAN/cracked servers, "microsoft" for online-mode
+  "version": null,             // null = auto-detect, or pin it: "1.20.4"
+  "commandPrefixes": ["bot,", "bot", "!bot", "@bot"],
+  "owners": []                 // [] = anyone may command the bot; ["YourName"] = only you
+}
 ```
-[18:24:30] INFO  connecting to localhost:54321 as CompanionBot...
-[18:24:30] INFO  logged in as CompanionBot on localhost:54321
-[18:24:30] INFO  spawned at (311, 21, 47) (version 1.20.4)
+
+Set `host` and `port` explicitly when you are connecting to a real server rather than a
+LAN world (auto-detect waits ~6 seconds, then falls back to `localhost:25565`).
+
+Environment variables win over the file, which is handy for a one-off:
+
+```bash
+MC_HOST=192.168.1.42 MC_PORT=25565 MC_USERNAME=Buddy npm start
 ```
 
-The bot announces itself in chat and starts following you. Stop it with `Ctrl+C`.
+Supported: `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_VERSION`, `MC_PASSWORD`,
+`BOT_OWNERS`, `BOT_LOG_LEVEL`.
 
-If it drops out (world closed, server restart) it reconnects every 10 seconds —
-turn that off with `"autoReconnect": false`.
+## Connecting to a server (instead of a LAN world)
 
-## 6. Talking to the bot
+1. Put the server address in `host` and its port (default `25565`) in `port`.
+2. If `white-list=true`, whitelist the bot: `/whitelist add CompanionBot`, then
+   `/whitelist reload`.
+3. If `online-mode=true`, the bot needs a real Microsoft account: set
+   `"auth": "microsoft"` and put that account's email in `"username"` — a browser sign-in
+   code appears in the console on first launch. On a private server it is simpler to set
+   `online-mode=false` and keep `"auth": "offline"`.
+
+## Commands
 
 Type in normal in-game chat, starting with `bot` (or `!bot`, `@bot`, or the bot's name).
 Phrasing is flexible — `bot mine stone`, `bot can you mine some stone please` and
@@ -132,14 +148,14 @@ Phrasing is flexible — `bot mine stone`, `bot can you mine some stone please` 
 Names are matched loosely too: `wood` covers every log type, `stone` covers cobblestone
 and deepslate, `diamonds` finds diamond ore, `pickaxe` finds whichever pickaxe it owns.
 
-To check how a phrase will be understood without starting Minecraft:
+To check how a phrase will be understood, without starting Minecraft:
 
 ```bash
 npm run parse -- "bot can you grab some logs"
 # bot can you grab some logs  ->  chop {"count":null}
 ```
 
-## 7. Staying alive
+## Staying alive
 
 Configured under `survival` in `config.json`:
 
@@ -153,12 +169,14 @@ Configured under `survival` in `config.json`:
 - It will not break your chests, furnaces or beds while pathing, and it never builds with
   diamond/gold/netherite blocks.
 
-## 8. Project layout
+## Project layout
 
 ```
-config.example.json   default settings (copy to config.json)
+start.bat / start.command / start.sh   one-click launchers
+scripts/launch.js     first-run setup: deps, config, then start
+config.example.json   default settings (copied to config.json on first run)
 src/
-  index.js            connect, spawn, reconnect, wire everything together
+  index.js            connect, LAN auto-detect, reconnect, wiring
   config.js           config file + environment loading
   logger.js           timestamped console logging
   tasks.js            one job at a time, with cancellation
@@ -174,29 +192,32 @@ src/
     inventory.js      status, equip, drop, give, eat
     survival.js       auto-eat, damage reactions, hazard escape
   util/
+    lan-discovery.js  reads Minecraft's "Open to LAN" broadcast
     names.js          "wood" -> oak_log, birch_log, ...
     chat.js           rate-limited chat queue
     async.js          sleep/cancellation helpers
 scripts/try-parse.js  offline command-phrasing checker
-test/                 unit tests + a connection test
+test/                 unit tests + connection and LAN-discovery tests
 ```
 
-## 9. Tests
+## Tests
 
 ```bash
 npm test
 ```
 
-Covers command parsing, name resolution, config loading, inventory/building/combat
-helpers, and a connection test that points the bot at a local TCP listener to confirm it
-dials the configured address and sends its username. Behaviour that needs a real world
-(following a player, mining, combat) is best checked in-game.
+Covers command parsing, name resolution, config loading, LAN broadcast handling, and the
+inventory/building/combat helpers, plus a connection test that points the bot at a local
+TCP listener to confirm it dials the configured address and sends its username. Behaviour
+that needs a real world (following a player, mining, combat) is best checked in-game.
 
-## 10. Troubleshooting
+## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| `nothing is listening on localhost:25565` | The world is not open to LAN, or the port changed — re-check the port from the LAN message. |
+| `no LAN world is being advertised` | The world is not open to LAN yet — do that first, then restart the bot. If it still misses it, your firewall is blocking UDP port 4445; set `host`/`port` in `config.json` manually. |
+| macOS: "start.command can't be opened" | Right-click the file → **Open** → **Open** (once), or run `chmod +x start.command start.sh` in the folder. |
+| macOS/Linux: double-click does nothing | The executable bit was lost when unzipping: `chmod +x start.command start.sh`. |
 | Kicked with a whitelist message | `/whitelist add CompanionBot` on the server, then `/whitelist reload`. |
 | Kicked for a version mismatch | Set `"version"` in `config.json` to your exact Minecraft version, e.g. `"1.20.4"`. |
 | `Invalid session` / auth errors | Online-mode server: use `"auth": "microsoft"` with a real account, or set `online-mode=false` for LAN. |

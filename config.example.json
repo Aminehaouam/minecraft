@@ -1,6 +1,6 @@
 {
-  "host": "localhost",
-  "port": 25565,
+  "host": "auto",
+  "port": "auto",
   "username": "CompanionBot",
   "auth": "offline",
   "version": null,
@@ -44,6 +44,7 @@
     "whisperReplies": false
   },
 
+  "lanDiscoveryTimeoutMs": 6000,
   "autoReconnect": true,
   "reconnectDelayMs": 10000,
   "logLevel": "info"

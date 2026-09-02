@@ -7,6 +7,7 @@ const configLoader = require('./config')
 const loggerFactory = require('./logger')
 const TaskManager = require('./tasks')
 const { createSpeaker } = require('./util/chat')
+const { discoverLanWorld } = require('./util/lan-discovery')
 const movement = require('./skills/movement')
 const survival = require('./skills/survival')
 const commands = require('./commands')
@@ -146,27 +147,62 @@ function createCompanion (config, { log = loggerFactory.create(config.logLevel) 
   }
 }
 
-function main () {
+/**
+ * Fills in "auto" host/port by listening for a Minecraft LAN broadcast, so a
+ * freshly opened LAN world needs no configuration at all. Runs before every
+ * connection attempt because Minecraft picks a new port each time.
+ */
+async function resolveTarget (config, log) {
+  const autoHost = config.host === 'auto'
+  const autoPort = config.port === 'auto'
+  if (!autoHost && !autoPort) return config
+
+  log.info('looking for a Minecraft world opened to LAN...')
+  const found = await discoverLanWorld({ timeoutMs: config.lanDiscoveryTimeoutMs ?? 6000, log })
+
+  if (found) {
+    log.info(`found ${found.motd ? `"${found.motd}"` : 'a LAN world'} at ${found.host}:${found.port}`)
+    return {
+      ...config,
+      host: autoHost ? found.host : config.host,
+      port: autoPort ? found.port : config.port
+    }
+  }
+
+  log.warn('no LAN world is being advertised — falling back to localhost:25565')
+  log.warn('(open your world to LAN, or set "host"/"port" in config.json)')
+  return {
+    ...config,
+    host: autoHost ? 'localhost' : config.host,
+    port: autoPort ? 25565 : config.port
+  }
+}
+
+async function main () {
   const config = configLoader.load()
   const log = loggerFactory.create(config.logLevel)
 
   if (!configLoader.hasUserConfig()) {
     log.warn('no config.json found — using config.example.json defaults (copy it to config.json to customise)')
   }
-  log.info(`connecting to ${config.host}:${config.port} as ${config.username}...`)
 
   let current = null
   let stopping = false
 
-  const connect = () => {
-    current = createCompanion(config, { log })
+  const connect = async () => {
+    const target = await resolveTarget(config, log)
+    if (stopping) return
+    log.info(`connecting to ${target.host}:${target.port} as ${target.username}...`)
+    current = createCompanion(target, { log })
     current.bot.on('end', () => {
       if (stopping || !config.autoReconnect) {
         if (!stopping) process.exitCode = 1
         return
       }
       log.info(`reconnecting in ${Math.round(config.reconnectDelayMs / 1000)}s...`)
-      setTimeout(connect, config.reconnectDelayMs)
+      setTimeout(() => {
+        connect().catch(err => log.error('reconnect failed:', err.message))
+      }, config.reconnectDelayMs)
     })
   }
 
@@ -180,9 +216,14 @@ function main () {
 
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
-  connect()
+  await connect()
 }
 
-if (require.main === module) main()
+if (require.main === module) {
+  main().catch(err => {
+    console.error('failed to start:', err.message)
+    process.exitCode = 1
+  })
+}
 
-module.exports = { createCompanion, buildBotOptions, main }
+module.exports = { createCompanion, buildBotOptions, main, resolveTarget }
