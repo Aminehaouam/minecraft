@@ -1,0 +1,50 @@
+{
+  "host": "localhost",
+  "port": 25565,
+  "username": "CompanionBot",
+  "auth": "offline",
+  "version": null,
+  "password": null,
+
+  "commandPrefixes": ["bot,", "bot", "!bot", "@bot"],
+  "owners": [],
+
+  "behavior": {
+    "followByDefault": true,
+    "followRange": 3,
+    "announceOnSpawn": true,
+    "searchRadius": 48,
+    "maxMineCount": 64,
+    "defaultMineCount": 4,
+    "defaultChopCount": 8,
+    "defaultCollectCount": 8,
+    "defaultTowerHeight": 5,
+    "defaultWallLength": 5
+  },
+
+  "movement": {
+    "canDig": true,
+    "allowParkour": true,
+    "allowSprinting": true,
+    "allow1by1towers": true,
+    "avoidHazards": true
+  },
+
+  "survival": {
+    "autoEat": true,
+    "eatWhenFoodBelow": 16,
+    "fleeWhenHealthBelow": 7,
+    "fightBackWhenHealthAbove": 10,
+    "hostileScanRadius": 16,
+    "escapeHazards": true
+  },
+
+  "chat": {
+    "minIntervalMs": 1200,
+    "whisperReplies": false
+  },
+
+  "autoReconnect": true,
+  "reconnectDelayMs": 10000,
+  "logLevel": "info"
+}

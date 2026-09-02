@@ -1,0 +1,27 @@
+{
+  "name": "minecraft-companion-bot",
+  "version": "1.0.0",
+  "description": "A Mineflayer companion bot that joins your Minecraft world and follows natural chat commands. No paid APIs — all intent parsing is local.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js",
+    "parse": "node scripts/try-parse.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "minecraft",
+    "mineflayer",
+    "bot",
+    "companion"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "minecraft-data": "^3.115.0",
+    "mineflayer": "^4.38.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.2.0"
+  }
+}
