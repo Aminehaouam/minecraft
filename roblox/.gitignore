@@ -1,0 +1,10 @@
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+build/
+
+# مخرجات مؤقتة من مشغّل الاختبارات
+tests/.bundle.luau
+tests/.run.luau
+__pycache__/

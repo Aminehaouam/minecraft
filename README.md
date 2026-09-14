@@ -16,6 +16,17 @@ to pay for.
 
 ---
 
+## TerraCraft 2D (Roblox game)
+
+This repository also contains a separate, self-contained Roblox project in
+[`roblox/`](roblox/): a 2D sandbox that blends Terraria and Minecraft —
+procedural world, mining/building, crafting tiers, mobs and a boss, day/night
+lighting, multiplayer and DataStore persistence.
+
+It shares nothing with the Node.js bot above; see
+[`roblox/README.md`](roblox/README.md) for setup, controls and architecture.
+
+
 ## Quick start (one click)
 
 1. **Download this project** — green **Code** button → **Download ZIP** → unzip it

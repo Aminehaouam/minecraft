@@ -1,0 +1,61 @@
+{
+  "name": "TerraCraft2D",
+  "globIgnorePaths": [
+    "**/*.md"
+  ],
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Shared": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "Server": {
+        "$path": "src/server"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "Client": {
+          "$path": "src/client"
+        }
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "Gravity": 0,
+        "StreamingEnabled": false
+      }
+    },
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [
+          1,
+          1,
+          1
+        ],
+        "OutdoorAmbient": [
+          1,
+          1,
+          1
+        ],
+        "Brightness": 0,
+        "GlobalShadows": false,
+        "FogEnd": 100000
+      }
+    },
+    "SoundService": {
+      "$className": "SoundService",
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    }
+  }
+}

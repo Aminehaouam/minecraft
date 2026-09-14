@@ -1,0 +1,6 @@
+# أدوات المشروع — ثبّتها بأمر واحد: rokit install
+# (أو استعمل aftman إن كان لديك؛ نفس الصيغة)
+[tools]
+rojo = "rojo-rbx/rojo@7.4.4"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.32.4"
+stylua = "JohnnyMorganz/StyLua@0.20.0"
