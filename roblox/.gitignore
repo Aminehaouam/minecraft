@@ -1,5 +1,8 @@
 *.rbxl
 *.rbxlx
+# استثناء: ملفّا المكان الجاهزان للتنزيل المباشر
+!TerraCraft.rbxl
+!TerraCraft.rbxlx
 *.rbxl.lock
 *.rbxlx.lock
 build/

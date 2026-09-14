@@ -8,6 +8,25 @@
 
 ---
 
+## تنزيل مباشر (بلا أي أدوات)
+
+ملف المكان جاهز في هذا المجلد — نزّله وافتحه في Roblox Studio واضغط **Play**:
+
+| الملف | الصيغة |
+|---|---|
+| **[`TerraCraft.rbxl`](TerraCraft.rbxl)** | ملف المكان الثنائي (المُوصى به) |
+| [`TerraCraft.rbxlx`](TerraCraft.rbxlx) | نفس المكان بصيغة XML نصية |
+
+للنشر على روبلوكس: في Studio افتح الملف ثم `File → Publish to Roblox As…`.
+
+> **مهم للحفظ**: بعد النشر فعّل
+> `Game Settings → Security → Enable Studio Access to API Services`
+> ليعمل DataStore. بدونها تعمل اللعبة طبيعياً لكن الحفظ في الذاكرة فقط.
+
+> أعِد بناء الملف بعد أي تعديل على المصدر بأمر `rojo build -o TerraCraft.rbxl`.
+
+---
+
 ## التشغيل السريع
 
 ```bash
