@@ -39,6 +39,7 @@ R("ladder", 6, { { id = "plank", n = 2 } }, "workbench")
 R("lantern", 1, { { id = "iron_bar", n = 1 }, { id = "torch", n = 1 } }, "workbench")
 R("anvil", 1, { { id = "iron_bar", n = 5 } }, "workbench")
 R("alchemy_table", 1, { { id = "plank", n = 10 }, { id = "crystal", n = 3 }, { id = "glow_dust", n = 2 } }, "workbench")
+R("enchant_table", 1, { { id = "obsidian", n = 8 }, { id = "crystal", n = 6 }, { id = "plank", n = 10 }, { id = "glow_dust", n = 4 } }, "anvil")
 
 R("wood_pickaxe", 1, { { id = "wood", n = 3 }, { id = "plank", n = 5 } }, "workbench")
 R("wood_axe", 1, { { id = "wood", n = 3 }, { id = "plank", n = 4 } }, "workbench")
@@ -54,20 +55,8 @@ R("leather_helm", 1, { { id = "leather", n = 5 } }, "workbench")
 R("leather_chest", 1, { { id = "leather", n = 8 } }, "workbench")
 R("leather_boots", 1, { { id = "leather", n = 5 } }, "workbench")
 
--- ===== الفرن (يستهلك فحماً) =====
-R("copper_bar", 1, { { id = "copper_ore", n = 3 }, { id = "coal", n = 1 } }, "furnace")
-R("iron_bar", 1, { { id = "iron_ore", n = 3 }, { id = "coal", n = 1 } }, "furnace")
-R("silver_bar", 1, { { id = "silver_ore", n = 3 }, { id = "coal", n = 1 } }, "furnace")
-R("gold_bar", 1, { { id = "gold_ore", n = 4 }, { id = "coal", n = 1 } }, "furnace")
-R("mythril_bar", 1, { { id = "mythril_ore", n = 4 }, { id = "coal", n = 2 } }, "furnace")
-R("hellstone_bar", 1, { { id = "hellstone_ore", n = 3 }, { id = "obsidian", n = 1 }, { id = "coal", n = 2 } }, "furnace")
-R("glass", 2, { { id = "sand", n = 2 }, { id = "coal", n = 1 } }, "furnace")
-R("stone_brick", 4, { { id = "stone", n = 4 }, { id = "coal", n = 1 } }, "furnace")
-R("sand_brick", 4, { { id = "sandstone", n = 4 }, { id = "coal", n = 1 } }, "furnace")
-R("ice_brick", 4, { { id = "ice", n = 4 } }, "furnace")
-R("hellstone_brick", 4, { { id = "hellstone_ore", n = 2 }, { id = "ash", n = 2 } }, "furnace")
-R("cooked_meat", 1, { { id = "leather", n = 1 }, { id = "coal", n = 1 } }, "furnace")
-R("bread", 1, { { id = "herb", n = 3 }, { id = "coal", n = 1 } }, "furnace")
+-- ملاحظة: الصهر انتقل إلى نافذة الفرن نفسها (انظر Smelting.luau).
+-- الفرن الآن محطة ذات حالة: وقود يحترق وشريط تقدّم، لا وصفة فورية.
 
 -- ===== السندان =====
 R("copper_pickaxe", 1, { { id = "copper_bar", n = 8 }, { id = "wood", n = 3 } }, "anvil")
@@ -87,6 +76,7 @@ R("mythril_blade", 1, { { id = "mythril_bar", n = 16 }, { id = "soul_fragment", 
 R("night_edge", 1, { { id = "mythril_blade", n = 1 }, { id = "hellstone_bar", n = 12 }, { id = "shadow_scale", n = 8 }, { id = "soul_fragment", n = 10 } }, "anvil")
 R("hell_bow", 1, { { id = "hellstone_bar", n = 10 }, { id = "string", n = 5 } }, "anvil")
 R("fire_arrow", 20, { { id = "arrow", n = 20 }, { id = "hellstone_ore", n = 1 } }, "anvil")
+R("hellstone_brick", 4, { { id = "hellstone_ore", n = 2 }, { id = "ash", n = 2 } }, "anvil")
 
 R("copper_helm", 1, { { id = "copper_bar", n = 10 } }, "anvil")
 R("copper_chest", 1, { { id = "copper_bar", n = 14 } }, "anvil")
@@ -103,6 +93,9 @@ R("mythril_boots", 1, { { id = "mythril_bar", n = 14 } }, "anvil")
 
 R("eye_totem", 1, { { id = "bone", n = 12 }, { id = "gel", n = 20 }, { id = "coal", n = 6 } }, "anvil")
 
+-- مواد التطوير والسحر: تُصنع أو تسقط من الوحوش العميقة
+R("upgrade_core", 1, { { id = "iron_bar", n = 3 }, { id = "silver_bar", n = 2 }, { id = "crystal", n = 2 } }, "anvil")
+
 -- ===== طاولة الخيمياء =====
 R("health_potion", 2, { { id = "herb", n = 2 }, { id = "mushroom", n = 1 }, { id = "glass", n = 1 } }, "alchemy")
 R("mana_potion", 2, { { id = "crystal", n = 1 }, { id = "herb", n = 1 }, { id = "glass", n = 1 } }, "alchemy")
@@ -114,6 +107,7 @@ R("flame_staff", 1, { { id = "spark_staff", n = 1 }, { id = "hellstone_bar", n =
 R("magic_mirror", 1, { { id = "glass", n = 6 }, { id = "silver_bar", n = 6 }, { id = "crystal", n = 4 } }, "alchemy")
 R("recall_stone", 3, { { id = "stone", n = 10 }, { id = "glow_dust", n = 1 } }, "alchemy")
 R("mana_crystal", 1, { { id = "crystal", n = 8 }, { id = "glow_dust", n = 4 } }, "alchemy")
+R("magic_essence", 2, { { id = "crystal", n = 3 }, { id = "glow_dust", n = 3 }, { id = "gold_bar", n = 1 } }, "alchemy")
 
 Recipes.list = list
 

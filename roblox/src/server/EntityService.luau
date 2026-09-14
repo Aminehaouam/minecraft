@@ -18,6 +18,7 @@ local Items = require(Shared.Items)
 local Mobs = require(Shared.Mobs)
 local Net = require(Shared.Net)
 local Physics = require(Shared.Physics)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 local WorldGen = require(Shared.WorldGen)
@@ -267,13 +268,16 @@ function EntityService.damageMob(entity: Entity, amount: number, kbx: number, kb
 end
 
 -- ضربة قريبة من لاعب
-function EntityService.meleeHit(player: Player, hx: number, hy: number, reach: number, damage: number, knockback: number, dx: number, dy: number, crit: boolean)
+-- يُعيد مجموع الضرر الموقع (يحتاجه امتصاص الحياة في PlayerService)
+function EntityService.meleeHit(player: Player, hx: number, hy: number, reach: number, damage: number, knockback: number, dx: number, dy: number, crit: boolean): number
 	local hit = false
+	local dealt = 0
 	for _, entity in entities do
 		if entity.kind == "mob" and not entity.dead then
 			local body = entity.body
 			if Util.dist(body.x, body.y, hx, hy) <= reach + math.max(body.w, body.h) / 2 then
 				EntityService.damageMob(entity, damage, dx * knockback * 3, dy * knockback * 1.4 - 5, player, crit)
+				dealt += damage
 				hit = true
 			end
 		end
@@ -290,6 +294,8 @@ function EntityService.meleeHit(player: Player, hx: number, hy: number, reach: n
 			if drop then EntityService.spawnItem(tx + 0.5, ty + 0.5, drop, 1) end
 		end
 	end
+
+	return dealt
 end
 
 -- ===== الذكاء الاصطناعي =====
@@ -324,6 +330,12 @@ local function tryAttackPlayer(entity: Entity, dt: number)
 				local dir = Util.sign(body.x - entity.body.x)
 				if dir == 0 then dir = entity.facing end
 				Services.Player.damage(player, entity.damage, def.name, dir * 9, -8)
+
+				-- صفة «شائك» على الدرع ترتدّ جزءاً من الضرر
+				local thorns = Upgrades.armorBonus(state.armor).thorns
+				if thorns > 0 then
+					EntityService.damageMob(entity, entity.damage * thorns, -dir * 4, -3, player, false)
+				end
 				return
 			end
 		end

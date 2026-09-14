@@ -21,6 +21,7 @@ Services.World = require(script.WorldService)
 Services.Player = require(script.PlayerService)
 Services.Entity = require(script.EntityService)
 Services.Craft = require(script.CraftService)
+Services.Station = require(script.StationService)
 
 -- لا شخصيات Roblox: اللعبة ثنائية الأبعاد بالكامل عبر الواجهة.
 -- نضبطها هنا لا في ملف Rojo لأنها خاصية على خدمة Players وليست StarterPlayer.
@@ -36,6 +37,7 @@ Services.World.start()
 Services.Player.start()
 Services.Entity.start()
 Services.Craft.start()
+Services.Station.start()
 
 print(string.format(
 	"[TerraCraft] الخادم جاهز | البذرة: %d | نقطة الظهور: %d, %d",

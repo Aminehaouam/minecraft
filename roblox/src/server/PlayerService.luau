@@ -18,6 +18,7 @@ local Inventory = require(Shared.Inventory)
 local Items = require(Shared.Items)
 local Net = require(Shared.Net)
 local Physics = require(Shared.Physics)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 
@@ -84,20 +85,18 @@ function PlayerService.buffAggregate(player: Player): Buffs.Aggregate
 end
 
 function PlayerService.defense(state: PlayerState): number
-	local total = 0
+	-- Upgrades.armorBonus يحسب دفاع كل قطعة مع تطويرها وصفتها السحرية
+	local total = Upgrades.armorBonus(state.armor).defense
 	local setName: string? = nil
 	local setCount = 0
 	for _, slot in { "head", "chest", "feet" } do
 		local stack = state.armor[slot]
 		if stack then
 			local item = Items.get(stack.id)
-			if item and item.defense then
-				total += item.defense
-				if item.setBonus then
-					if setName == nil or setName == item.setBonus then
-						setName = item.setBonus
-						setCount += 1
-					end
+			if item and item.setBonus then
+				if setName == nil or setName == item.setBonus then
+					setName = item.setBonus
+					setCount += 1
 				end
 			end
 		end
@@ -107,6 +106,11 @@ function PlayerService.defense(state: PlayerState): number
 	end
 	total += Buffs.aggregate(state.buffs).defense
 	return total
+end
+
+-- المانا القصوى الفعّالة = المحفوظة + مكافآت الدرع المسحور
+function PlayerService.effectiveMaxMana(state: PlayerState): number
+	return state.maxMana + Upgrades.armorBonus(state.armor).mana
 end
 
 function PlayerService.syncStats(player: Player)
@@ -122,7 +126,7 @@ function PlayerService.syncStats(player: Player)
 		hp = math.floor(state.hp + 0.5),
 		maxHp = state.maxHp,
 		mana = math.floor(state.mana + 0.5),
-		maxMana = state.maxMana,
+		maxMana = PlayerService.effectiveMaxMana(state),
 		food = math.floor(state.food + 0.5),
 		defense = PlayerService.defense(state),
 		dead = state.dead,
@@ -339,10 +343,11 @@ local function attack(player: Player, state: PlayerState, aimX: number, aimY: nu
 	local crit = 0.03
 
 	if item then
-		damage = item.damage or damage
-		useTime = item.useTime or useTime
-		knockback = item.knockback or knockback
-		crit = item.crit or crit
+		-- كل هذه تمرّ عبر Upgrades لتشمل مستوى التطوير والصفة السحرية
+		damage = if item.damage then Upgrades.damage(stack) else damage
+		useTime = Upgrades.useTime(stack)
+		knockback = Upgrades.knockback(stack)
+		crit = Upgrades.crit(stack)
 	end
 
 	if now - state.lastAttack < useTime * 0.85 then return end
@@ -412,13 +417,21 @@ local function attack(player: Player, state: PlayerState, aimX: number, aimY: nu
 	end
 
 	-- ضربة قريبة
-	local reach = 3.0
+	local reach = 3.0 + Upgrades.reachBonus(stack) * 0.5
 	local hitX = state.body.x + dx * reach * 0.6
 	local hitY = state.body.y + dy * reach * 0.6
 	local isCrit = math.random() < crit
 	local finalDamage = if isCrit then damage * 2 else damage
 
-	Services.Entity.meleeHit(player, hitX, hitY, reach, finalDamage, knockback, dx, dy, isCrit)
+	local dealt = Services.Entity.meleeHit(player, hitX, hitY, reach, finalDamage, knockback, dx, dy, isCrit)
+
+	-- صفة «مصّاص»: تشفي نسبة من الضرر الموقع
+	local lifesteal = Upgrades.lifesteal(stack)
+	if lifesteal > 0 and dealt > 0 then
+		local healed = math.max(1, math.floor(dealt * lifesteal))
+		state.hp = math.min(state.maxHp, state.hp + healed)
+		Net.get("Hit"):FireClient(player, { kind = "heal", x = state.body.x, y = state.body.y, amount = healed })
+	end
 	Net.get("Fx"):FireAllClients({
 		kind = "swing", x = state.body.x, y = state.body.y,
 		dx = dx, dy = dy, item = if item then item.id else "hand", player = player.UserId,
@@ -560,7 +573,8 @@ local function handlePlayerState(player: Player, x: number, y: number, vx: numbe
 	local body = state.body
 	local dt = math.max(1 / 60, 1 / Config.STATE_HZ)
 	local agg = Buffs.aggregate(state.buffs)
-	local maxStep = (Config.WALK_SPEED * agg.speed + Config.MAX_FALL) * dt * 2.2 + 2.5
+	local armorSpeed = Upgrades.armorBonus(state.armor).speed
+	local maxStep = (Config.WALK_SPEED * agg.speed * armorSpeed + Config.MAX_FALL) * dt * 2.2 + 2.5
 	local delta = Util.dist(body.x, body.y, x, y)
 
 	if delta > maxStep then
@@ -614,6 +628,7 @@ local function broadcastPeers()
 			hp = math.floor(state.hp / math.max(1, state.maxHp) * 100),
 			d = state.dead,
 			it = if state.slots[state.hotbar] then (state.slots[state.hotbar] :: Inventory.Stack).id else "",
+			iu = Upgrades.isModified(state.slots[state.hotbar]),
 			hd = if state.armor.head then (state.armor.head :: Inventory.Stack).id else "",
 			ch = if state.armor.chest then (state.armor.chest :: Inventory.Stack).id else "",
 		})
@@ -651,16 +666,17 @@ local function tickPlayer(state: PlayerState, dt: number)
 		state.hp -= Config.STARVE_DPS * dt
 	end
 
-	-- تجدد الحياة
+	-- تجدد الحياة (يشمل صفة «حيويّ» على الدرع)
+	local armorBonus = Upgrades.armorBonus(state.armor)
 	if os.clock() - state.lastDamage > Config.HP_REGEN_DELAY and state.food > 10 then
-		local regen = Config.HP_REGEN * (state.food / Config.FOOD_MAX) + agg.regen
+		local regen = Config.HP_REGEN * (state.food / Config.FOOD_MAX) + agg.regen + armorBonus.regen
 		state.hp = math.min(state.maxHp, state.hp + regen * dt)
 	elseif agg.regen > 0 then
 		state.hp = math.min(state.maxHp, state.hp + agg.regen * dt)
 	end
 
-	-- المانا
-	state.mana = math.min(state.maxMana, state.mana + Config.MANA_REGEN * dt)
+	-- المانا (السقف يشمل مكافأة الدرع المسحور)
+	state.mana = math.min(PlayerService.effectiveMaxMana(state), state.mana + Config.MANA_REGEN * dt)
 
 	-- ضرر مستمر من التعزيزات السلبية
 	if agg.dps > 0 then
@@ -697,9 +713,16 @@ end
 -- ===== الحفظ =====
 
 local function serialize(state: PlayerState): any
-	local armor = {}
+	local armor: { [string]: any } = {}
 	for slot, stack in state.armor do
-		if stack then armor[slot] = stack.id end
+		if stack then
+			local entry: { any } = { stack.id }
+			if stack.up then
+				entry[2] = stack.up.lvl
+				entry[3] = stack.up.aff or ""
+			end
+			armor[slot] = entry
+		end
 	end
 	return {
 		v = 1,
@@ -791,9 +814,16 @@ local function onPlayerAdded(player: Player)
 	if type(saved) == "table" then
 		state.slots = Inventory.deserialize(saved.inv)
 		if type(saved.armor) == "table" then
-			for slot, id in saved.armor do
+			for slot, entry in saved.armor do
+				-- الصيغة القديمة نص، والحالية مصفوفة تحمل التطوير
+				local id = if type(entry) == "string" then entry
+					elseif type(entry) == "table" then entry[1] else nil
 				if type(id) == "string" and Items.get(id) then
-					state.armor[slot] = { id = id, n = 1 }
+					local stack: Inventory.Stack = { id = id, n = 1 }
+					if type(entry) == "table" and type(entry[2]) == "number" then
+						stack.up = Upgrades.normalize({ lvl = entry[2], aff = entry[3] })
+					end
+					state.armor[slot] = stack
 				end
 			end
 		end

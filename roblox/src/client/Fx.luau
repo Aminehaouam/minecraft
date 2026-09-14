@@ -228,6 +228,12 @@ function Fx.handle(payload: any)
 		Fx.pickup(payload.x, payload.y, payload.item, payload.count)
 	elseif kind == "swing" then
 		if payload.player ~= State.userId then return end
+	elseif kind == "upgrade" then
+		Fx.burst(payload.x, payload.y - 1, Color3.fromRGB(250, 205, 110), 22, 8, 0.7, -4)
+		Fx.text(payload.x, payload.y - 2, "تمّ التطوير!", Color3.fromRGB(250, 210, 110), 20)
+	elseif kind == "enchant" then
+		Fx.burst(payload.x, payload.y - 1, Color3.fromRGB(180, 150, 250), 26, 9, 0.8, -5)
+		Fx.text(payload.x, payload.y - 2, "سِحر!", Color3.fromRGB(190, 150, 250), 20)
 	elseif kind == "boss_charge" then
 		Renderer.shake(12, 0.3)
 		Fx.burst(payload.x, payload.y, Color3.fromRGB(220, 60, 70), 20, 12, 0.5, 0)

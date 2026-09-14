@@ -14,7 +14,7 @@ SHARED = ROOT / "src" / "shared"
 MODULES = [
     "Util", "Noise", "Config", "Blocks", "Items", "Recipes",
     "Chunk", "WorldGen", "World", "Physics", "Mining", "Inventory",
-    "Buffs", "Mobs",
+    "Buffs", "Mobs", "Smelting", "Upgrades",
 ]
 
 STUBS = r'''

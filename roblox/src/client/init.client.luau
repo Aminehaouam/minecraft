@@ -259,6 +259,13 @@ Net.get("Respawn").OnClientEvent:Connect(function(x: number, y: number)
 	Lighting.markDirty()
 end)
 
+Net.get("Station").OnClientEvent:Connect(function(payload)
+	Panels.openStation(payload)
+	if type(payload) == "table" and payload.open then
+		Sfx.play("ui")
+	end
+end)
+
 Net.get("Shop").OnClientEvent:Connect(function(payload)
 	Panels.openShop(payload)
 	if payload.open then

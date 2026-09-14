@@ -18,6 +18,7 @@ local Items = require(Shared.Items)
 local Mining = require(Shared.Mining)
 local Net = require(Shared.Net)
 local Physics = require(Shared.Physics)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 
@@ -176,12 +177,13 @@ local function updateMovement(dt: number)
 	if input.left then moveDir -= 1 end
 	if input.right then moveDir += 1 end
 
-	local speed = Config.WALK_SPEED * agg.speed
+	local armorSpeed = Upgrades.armorBonus(State.armor).speed
+	local speed = Config.WALK_SPEED * agg.speed * armorSpeed
 	local accel = if body.onGround then Config.WALK_ACCEL else Config.AIR_ACCEL
 	local inWater = body.inLiquid ~= 0
 
 	if inWater then
-		speed = Config.SWIM_SPEED * agg.speed
+		speed = Config.SWIM_SPEED * agg.speed * armorSpeed
 		accel *= 0.6
 	end
 
@@ -277,14 +279,15 @@ local function targetTile(): (number?, number?, boolean)
 	local tx, ty = math.floor(wx), math.floor(wy)
 	if not World.inBounds(tx, ty) then return nil, nil, false end
 	local body = State.body
-	local inRange = Util.dist(body.x, body.y, tx + 0.5, ty + 0.5) <= Config.REACH
+	local reach = Config.REACH + Upgrades.reachBonus(State.heldItem())
+	local inRange = Util.dist(body.x, body.y, tx + 0.5, ty + 0.5) <= reach
 	return tx, ty, inRange
 end
 
 local function currentMiningMultiplier(): number
 	local map = {}
 	for _, buff in State.buffs do map[buff.id] = buff.t end
-	return Buffs.aggregate(map).mining
+	return Buffs.aggregate(map).mining * Upgrades.miningMultiplier(State.heldItem())
 end
 
 local function tryPlace(tx: number, ty: number): boolean
@@ -342,7 +345,12 @@ local function tryMine(tx: number, ty: number, dt: number): boolean
 		if targetId == Blocks.ID.AIR or Blocks.isLiquid(targetId) then return false end
 	end
 
-	local required = Mining.breakTime(targetId, heldId, currentMiningMultiplier())
+	local required = Mining.breakTime(
+		targetId,
+		heldId,
+		currentMiningMultiplier(),
+		Upgrades.powerBonus(held)
+	)
 	if not required then
 		State.mining = nil
 		return false
@@ -434,6 +442,15 @@ local function updateActions(dt: number)
 	end
 
 	if input.secondary then
+		-- التفاعل مع محطة (فرن، طاولة عمل، سندان، طاولة سحر) له الأولوية
+		local block = Blocks.get(World.fg(ClientWorld.get(), tx, ty))
+		if block.station then
+			input.secondary = false
+			Net.get("Station"):FireServer("open", tx, ty)
+			fire("sfx", "ui")
+			return
+		end
+
 		local held = State.heldItem()
 		local item = if held then Items.get(held.id) else nil
 		if item and (item.cat == "consumable" or item.cat == "misc") then

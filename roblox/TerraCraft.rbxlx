@@ -92,6 +92,7 @@ local ID = {
 	STONE_BRICK = 23,
 	GLASS = 24,
 	SAND_BRICK = 25,
+	BRICK = 30,
 	ICE_BRICK = 26,
 	HELLSTONE_BRICK = 27,
 	OBSIDIAN = 28,
@@ -116,6 +117,7 @@ local ID = {
 	LADDER = 66,
 	LANTERN = 67,
 	ALCHEMY = 68,
+	ENCHANT_TABLE = 69,
 
 	GRASS_TUFT = 80,
 	FLOWER = 81,
@@ -159,6 +161,7 @@ def({ id = ID.PLANK, name = "ألواح", color = C(160, 116, 70), shade = 7, so
 def({ id = ID.STONE_BRICK, name = "طوب حجري", color = C(104, 104, 112), shade = 6, solid = true, opacity = 15, light = 0, hard = 1.3, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.GLASS, name = "زجاج", color = C(198, 232, 240), shade = 3, solid = true, opacity = 1, light = 0, hard = 0.3, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.SAND_BRICK, name = "طوب رملي", color = C(204, 178, 118), shade = 6, solid = true, opacity = 15, light = 0, hard = 1.2, tool = "pickaxe", pick = 0, sound = "hard" })
+def({ id = ID.BRICK, name = "طوب طيني", color = C(170, 96, 78), shade = 6, solid = true, opacity = 15, light = 0, hard = 1.3, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.ICE_BRICK, name = "طوب جليدي", color = C(186, 226, 246), shade = 5, solid = true, opacity = 8, light = 1, hard = 1.0, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.HELLSTONE_BRICK, name = "طوب جهنمي", color = C(126, 56, 44), shade = 8, solid = true, opacity = 15, light = 3, hard = 1.8, tool = "pickaxe", pick = 55, sound = "hard" })
 def({ id = ID.OBSIDIAN, name = "سبج", color = C(48, 36, 66), shade = 6, solid = true, opacity = 15, light = 0, hard = 4.0, tool = "pickaxe", pick = 65, sound = "hard" })
@@ -182,6 +185,7 @@ def({ id = ID.WORKBENCH, name = "طاولة عمل", color = C(150, 104, 62), sh
 def({ id = ID.FURNACE, name = "فرن", color = C(96, 92, 96), shade = 5, solid = false, opacity = 2, light = 8, hard = 1.4, tool = "pickaxe", pick = 0, station = "furnace", sound = "hard" })
 def({ id = ID.ANVIL, name = "سندان", color = C(76, 78, 86), shade = 4, solid = false, opacity = 2, light = 0, hard = 1.8, tool = "pickaxe", pick = 0, station = "anvil", sound = "hard" })
 def({ id = ID.ALCHEMY, name = "طاولة خيمياء", color = C(108, 78, 150), shade = 5, solid = false, opacity = 2, light = 4, hard = 1.0, tool = "axe", pick = 0, station = "alchemy", sound = "wood" })
+def({ id = ID.ENCHANT_TABLE, name = "طاولة السحر", color = C(86, 66, 156), shade = 6, solid = false, opacity = 2, light = 7, hard = 2.2, tool = "pickaxe", pick = 25, station = "enchant", sound = "hard" })
 def({ id = ID.CHEST, name = "صندوق", color = C(172, 124, 62), shade = 4, solid = false, opacity = 2, light = 0, hard = 0.8, tool = "axe", pick = 0, container = true, sound = "wood" })
 def({ id = ID.PLATFORM, name = "منصة", color = C(164, 122, 76), shade = 5, solid = false, opacity = 1, light = 0, hard = 0.3, tool = "axe", pick = 0, platform = true, sound = "wood" })
 def({ id = ID.LADDER, name = "سلّم", color = C(178, 138, 84), shade = 4, solid = false, opacity = 1, light = 0, hard = 0.3, tool = "axe", pick = 0, climb = true, attach = true, sound = "wood" })
@@ -539,10 +543,13 @@ return Config
 local Config = require(script.Parent.Config)
 local Items = require(script.Parent.Items)
 local Recipes = require(script.Parent.Recipes)
+local Upgrades = require(script.Parent.Upgrades)
 
 local Inventory = {}
 
-export type Stack = { id: string, n: number }
+-- `up` يحمل مستوى التطوير والصفة السحرية. الأغراض القابلة للتطوير حدّ تكديسها 1،
+-- لذا لا يلتقي كومان مختلفان في الدمج أبداً — لكننا نحرس ذلك صراحة على أي حال.
+export type Stack = { id: string, n: number, up: Upgrades.Upgrade? }
 export type Slots = { [number]: Stack? }
 
 function Inventory.new(): Slots
@@ -551,7 +558,11 @@ end
 
 function Inventory.copyStack(stack: Stack?): Stack?
 	if not stack then return nil end
-	return { id = stack.id, n = stack.n }
+	local copy: Stack = { id = stack.id, n = stack.n }
+	if stack.up then
+		copy.up = { lvl = stack.up.lvl, aff = stack.up.aff }
+	end
+	return copy
 end
 
 -- إضافة عناصر؛ تُعيد الكمية المتبقية التي لم تتسع
@@ -561,10 +572,10 @@ function Inventory.add(slots: Slots, id: string, n: number, limit: number?): num
 	local max = item.max
 	local slotCount = limit or Config.INV_SLOTS
 
-	-- أولاً: أكمل الأكوام الموجودة
+	-- أولاً: أكمل الأكوام الموجودة (لا ندمج في كومة مطوّرة أو مسحورة)
 	for i = 1, slotCount do
 		local stack = slots[i]
-		if stack and stack.id == id and stack.n < max then
+		if stack and stack.id == id and stack.n < max and stack.up == nil then
 			local space = max - stack.n
 			local take = math.min(space, n)
 			stack.n += take
@@ -584,6 +595,21 @@ function Inventory.add(slots: Slots, id: string, n: number, limit: number?): num
 	end
 
 	return n
+end
+
+-- إضافة كومة كما هي (مع تطويرها) — تُستعمل لإعادة غرض مطوّر إلى اللاعب
+function Inventory.addStack(slots: Slots, stack: Stack, limit: number?): boolean
+	if not stack.up then
+		return Inventory.add(slots, stack.id, stack.n, limit) == 0
+	end
+	local slotCount = limit or Config.INV_SLOTS
+	for i = 1, slotCount do
+		if not slots[i] then
+			slots[i] = Inventory.copyStack(stack)
+			return true
+		end
+	end
+	return false
 end
 
 function Inventory.count(slots: Slots, id: string): number
@@ -659,8 +685,8 @@ function Inventory.swap(slots: Slots, a: number, b: number)
 	if a == b then return end
 	local sa, sb = slots[a], slots[b]
 
-	-- دمج الأكوام المتطابقة
-	if sa and sb and sa.id == sb.id then
+	-- دمج الأكوام المتطابقة (الأغراض المطوّرة لا تندمج أبداً)
+	if sa and sb and sa.id == sb.id and sa.up == nil and sb.up == nil then
 		local max = Items.maxStack(sa.id)
 		local move = math.min(max - sb.n, sa.n)
 		if move > 0 then
@@ -680,7 +706,12 @@ function Inventory.serialize(slots: Slots): { any }
 	for i = 1, Config.INV_SLOTS do
 		local stack = slots[i]
 		if stack then
-			table.insert(out, { i, stack.id, stack.n } :: { any })
+			local entry: { any } = { i, stack.id, stack.n }
+			if stack.up then
+				entry[4] = stack.up.lvl
+				entry[5] = stack.up.aff or ""
+			end
+			table.insert(out, entry)
 		end
 	end
 	return out
@@ -694,7 +725,11 @@ function Inventory.deserialize(data: { any }?): Slots
 			local index, id, n = entry[1], entry[2], entry[3]
 			if type(index) == "number" and type(id) == "string" and type(n) == "number" then
 				if index >= 1 and index <= Config.INV_SLOTS and Items.get(id) and n > 0 then
-					slots[index] = { id = id, n = math.min(n, Items.maxStack(id)) }
+					local stack: Stack = { id = id, n = math.min(n, Items.maxStack(id)) }
+					if type(entry[4]) == "number" and Upgrades.canModify(id) then
+						stack.up = Upgrades.normalize({ lvl = entry[4], aff = entry[5] })
+					end
+					slots[index] = stack
 				end
 			end
 		end
@@ -707,7 +742,14 @@ function Inventory.toNetwork(slots: Slots): { [number]: any }
 	local out: { [number]: any } = {}
 	for i = 1, Config.INV_SLOTS do
 		local stack = slots[i]
-		if stack then out[i] = { stack.id, stack.n } :: { any } end
+		if stack then
+			local entry: { any } = { stack.id, stack.n }
+			if stack.up then
+				entry[3] = stack.up.lvl
+				entry[4] = stack.up.aff or ""
+			end
+			out[i] = entry
+		end
 	end
 	return out
 end
@@ -820,6 +862,7 @@ blockItem("plank", B.PLANK, 3, true)
 blockItem("stone_brick", B.STONE_BRICK, 3, true)
 blockItem("glass", B.GLASS, 4, true)
 blockItem("sand_brick", B.SAND_BRICK, 3, true)
+blockItem("brick", B.BRICK, 4, true)
 blockItem("ice_brick", B.ICE_BRICK, 3, true)
 blockItem("hellstone_brick", B.HELLSTONE_BRICK, 12, true)
 blockItem("obsidian", B.OBSIDIAN, 14, true)
@@ -838,6 +881,7 @@ blockItem("workbench", B.WORKBENCH, 8)
 blockItem("furnace", B.FURNACE, 10)
 blockItem("anvil", B.ANVIL, 18)
 blockItem("alchemy_table", B.ALCHEMY, 24)
+blockItem("enchant_table", B.ENCHANT_TABLE, 60)
 blockItem("chest", B.CHEST, 12)
 blockItem("platform", B.PLATFORM, 1)
 blockItem("ladder", B.LADDER, 2)
@@ -870,6 +914,8 @@ material("glow_dust", "غبار متوهج", C(150, 242, 210), 12, 1)
 material("shadow_scale", "قشرة ظلامية", C(126, 96, 170), 60, 3)
 material("soul_fragment", "شظية روح", C(196, 150, 250), 80, 4)
 material("coin", "عملة", C(246, 210, 96), 1)
+material("upgrade_core", "نواة تطوير", C(232, 176, 80), 70, 2)
+material("magic_essence", "جوهر سحري", C(168, 140, 250), 85, 3)
 
 -- ===== الأدوات =====
 local function tool(id: string, name: string, kind: string, power: number, damage: number, useTime: number, color: Color3, rarity: number, value: number)
@@ -1056,7 +1102,7 @@ local Items = require(script.Parent.Items)
 local Mining = {}
 
 -- يُعيد زمن الكسر بالثواني، أو nil إن كانت البلاطة غير قابلة للكسر بهذه الأداة
-function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: number?): number?
+function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: number?, powerBonus: number?): number?
 	local block = Blocks.get(blockId)
 	if block.hard == math.huge then return nil end
 	if blockId == Blocks.ID.AIR then return nil end
@@ -1064,6 +1110,7 @@ function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: nu
 	local item = if itemId then Items.get(itemId) else nil
 	local power = 0
 	local matching = false
+	local bonus = powerBonus or 0 -- قوة إضافية من تطوير الأداة (+1..+5)
 
 	if item then
 		if block.tool == "pickaxe" and item.pick then
@@ -1076,6 +1123,10 @@ function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: nu
 			matching = true
 			power = math.max(item.pick or 0, item.axe or 0)
 		end
+	end
+
+	if power > 0 or bonus > 0 then
+		power += bonus
 	end
 
 	if block.pick > 0 and power < block.pick then
@@ -1094,8 +1145,8 @@ function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: nu
 end
 
 -- هل يستطيع هذا العنصر كسر هذه البلاطة أصلاً؟
-function Mining.canBreak(blockId: number, itemId: string?): boolean
-	return Mining.breakTime(blockId, itemId, 1) ~= nil
+function Mining.canBreak(blockId: number, itemId: string?, powerBonus: number?): boolean
+	return Mining.breakTime(blockId, itemId, 1, powerBonus) ~= nil
 end
 
 return Mining
@@ -1232,7 +1283,12 @@ def({
 	id = "stone_golem", name = "غول حجري", w = 2.2, h = 3.2, hp = 180, damage = 28, defense = 12,
 	speed = 3.2, jump = 10, ai = "walker", color = C(110, 108, 116), accent = C(70, 68, 76), eyes = true,
 	knockbackResist = 0.75, detect = 20, attackCd = 1.4,
-	drops = { { id = "stone", min = 6, max = 14, chance = 1 }, { id = "silver_ore", min = 1, max = 3, chance = 0.4 }, { id = "crystal", min = 1, max = 2, chance = 0.25 } },
+	drops = {
+		{ id = "stone", min = 6, max = 14, chance = 1 },
+		{ id = "silver_ore", min = 1, max = 3, chance = 0.4 },
+		{ id = "crystal", min = 1, max = 2, chance = 0.25 },
+		{ id = "upgrade_core", min = 1, max = 1, chance = 0.22 },
+	},
 	coins = { min = 12, max = 30 }, layer = "cavern", minDepth = 300, weight = 14,
 })
 
@@ -1240,7 +1296,11 @@ def({
 	id = "lava_imp", name = "عفريت الحمم", w = 1.4, h = 2.0, hp = 140, damage = 32, defense = 10,
 	speed = 7.0, jump = 0, ai = "flyer", color = C(214, 90, 54), accent = C(120, 40, 30), eyes = true,
 	knockbackResist = 0.4, detect = 28, attackCd = 1.2, projectile = "fireball",
-	drops = { { id = "hellstone_ore", min = 1, max = 3, chance = 0.5 }, { id = "soul_fragment", min = 1, max = 1, chance = 0.18 } },
+	drops = {
+		{ id = "hellstone_ore", min = 1, max = 3, chance = 0.5 },
+		{ id = "soul_fragment", min = 1, max = 1, chance = 0.18 },
+		{ id = "upgrade_core", min = 1, max = 2, chance = 0.28 },
+	},
 	coins = { min = 15, max = 40 }, layer = "hell", weight = 26,
 })
 
@@ -1248,7 +1308,11 @@ def({
 	id = "shadow_crawler", name = "زاحف الظل", w = 1.9, h = 1.6, hp = 160, damage = 30, defense = 9,
 	speed = 7.5, jump = 13, ai = "climber", color = C(70, 52, 96), accent = C(150, 110, 210), eyes = true,
 	knockbackResist = 0.3, detect = 26, attackCd = 0.8,
-	drops = { { id = "shadow_scale", min = 1, max = 3, chance = 0.8 }, { id = "soul_fragment", min = 1, max = 1, chance = 0.25 } },
+	drops = {
+		{ id = "shadow_scale", min = 1, max = 3, chance = 0.8 },
+		{ id = "soul_fragment", min = 1, max = 1, chance = 0.25 },
+		{ id = "magic_essence", min = 1, max = 2, chance = 0.3 },
+	},
 	coins = { min = 14, max = 34 }, layer = "cavern", minDepth = 340, weight = 16,
 })
 
@@ -1262,6 +1326,8 @@ def({
 		{ id = "shadow_scale", min = 10, max = 22, chance = 1 },
 		{ id = "diamond", min = 2, max = 5, chance = 0.7 },
 		{ id = "life_crystal", min = 1, max = 2, chance = 0.5 },
+		{ id = "upgrade_core", min = 3, max = 6, chance = 1 },
+		{ id = "magic_essence", min = 4, max = 8, chance = 1 },
 	},
 	coins = { min = 300, max = 600 }, layer = "any", weight = 0, boss = true,
 })
@@ -1333,7 +1399,7 @@ local CHANNELS: { [string]: boolean } = {
 	Hit = false, -- أرقام الضرر والمؤثرات
 	TimeSync = false,
 	Notify = false,
-	Container = false, -- الصناديق
+	Station = false, -- الفرن والسندان وطاولة السحر ونافذة التصنيع
 	Shop = false,
 	Respawn = false,
 	Boss = false,
@@ -1812,6 +1878,7 @@ R("ladder", 6, { { id = "plank", n = 2 } }, "workbench")
 R("lantern", 1, { { id = "iron_bar", n = 1 }, { id = "torch", n = 1 } }, "workbench")
 R("anvil", 1, { { id = "iron_bar", n = 5 } }, "workbench")
 R("alchemy_table", 1, { { id = "plank", n = 10 }, { id = "crystal", n = 3 }, { id = "glow_dust", n = 2 } }, "workbench")
+R("enchant_table", 1, { { id = "obsidian", n = 8 }, { id = "crystal", n = 6 }, { id = "plank", n = 10 }, { id = "glow_dust", n = 4 } }, "anvil")
 
 R("wood_pickaxe", 1, { { id = "wood", n = 3 }, { id = "plank", n = 5 } }, "workbench")
 R("wood_axe", 1, { { id = "wood", n = 3 }, { id = "plank", n = 4 } }, "workbench")
@@ -1827,20 +1894,8 @@ R("leather_helm", 1, { { id = "leather", n = 5 } }, "workbench")
 R("leather_chest", 1, { { id = "leather", n = 8 } }, "workbench")
 R("leather_boots", 1, { { id = "leather", n = 5 } }, "workbench")
 
--- ===== الفرن (يستهلك فحماً) =====
-R("copper_bar", 1, { { id = "copper_ore", n = 3 }, { id = "coal", n = 1 } }, "furnace")
-R("iron_bar", 1, { { id = "iron_ore", n = 3 }, { id = "coal", n = 1 } }, "furnace")
-R("silver_bar", 1, { { id = "silver_ore", n = 3 }, { id = "coal", n = 1 } }, "furnace")
-R("gold_bar", 1, { { id = "gold_ore", n = 4 }, { id = "coal", n = 1 } }, "furnace")
-R("mythril_bar", 1, { { id = "mythril_ore", n = 4 }, { id = "coal", n = 2 } }, "furnace")
-R("hellstone_bar", 1, { { id = "hellstone_ore", n = 3 }, { id = "obsidian", n = 1 }, { id = "coal", n = 2 } }, "furnace")
-R("glass", 2, { { id = "sand", n = 2 }, { id = "coal", n = 1 } }, "furnace")
-R("stone_brick", 4, { { id = "stone", n = 4 }, { id = "coal", n = 1 } }, "furnace")
-R("sand_brick", 4, { { id = "sandstone", n = 4 }, { id = "coal", n = 1 } }, "furnace")
-R("ice_brick", 4, { { id = "ice", n = 4 } }, "furnace")
-R("hellstone_brick", 4, { { id = "hellstone_ore", n = 2 }, { id = "ash", n = 2 } }, "furnace")
-R("cooked_meat", 1, { { id = "leather", n = 1 }, { id = "coal", n = 1 } }, "furnace")
-R("bread", 1, { { id = "herb", n = 3 }, { id = "coal", n = 1 } }, "furnace")
+-- ملاحظة: الصهر انتقل إلى نافذة الفرن نفسها (انظر Smelting.luau).
+-- الفرن الآن محطة ذات حالة: وقود يحترق وشريط تقدّم، لا وصفة فورية.
 
 -- ===== السندان =====
 R("copper_pickaxe", 1, { { id = "copper_bar", n = 8 }, { id = "wood", n = 3 } }, "anvil")
@@ -1860,6 +1915,7 @@ R("mythril_blade", 1, { { id = "mythril_bar", n = 16 }, { id = "soul_fragment", 
 R("night_edge", 1, { { id = "mythril_blade", n = 1 }, { id = "hellstone_bar", n = 12 }, { id = "shadow_scale", n = 8 }, { id = "soul_fragment", n = 10 } }, "anvil")
 R("hell_bow", 1, { { id = "hellstone_bar", n = 10 }, { id = "string", n = 5 } }, "anvil")
 R("fire_arrow", 20, { { id = "arrow", n = 20 }, { id = "hellstone_ore", n = 1 } }, "anvil")
+R("hellstone_brick", 4, { { id = "hellstone_ore", n = 2 }, { id = "ash", n = 2 } }, "anvil")
 
 R("copper_helm", 1, { { id = "copper_bar", n = 10 } }, "anvil")
 R("copper_chest", 1, { { id = "copper_bar", n = 14 } }, "anvil")
@@ -1876,6 +1932,9 @@ R("mythril_boots", 1, { { id = "mythril_bar", n = 14 } }, "anvil")
 
 R("eye_totem", 1, { { id = "bone", n = 12 }, { id = "gel", n = 20 }, { id = "coal", n = 6 } }, "anvil")
 
+-- مواد التطوير والسحر: تُصنع أو تسقط من الوحوش العميقة
+R("upgrade_core", 1, { { id = "iron_bar", n = 3 }, { id = "silver_bar", n = 2 }, { id = "crystal", n = 2 } }, "anvil")
+
 -- ===== طاولة الخيمياء =====
 R("health_potion", 2, { { id = "herb", n = 2 }, { id = "mushroom", n = 1 }, { id = "glass", n = 1 } }, "alchemy")
 R("mana_potion", 2, { { id = "crystal", n = 1 }, { id = "herb", n = 1 }, { id = "glass", n = 1 } }, "alchemy")
@@ -1887,6 +1946,7 @@ R("flame_staff", 1, { { id = "spark_staff", n = 1 }, { id = "hellstone_bar", n =
 R("magic_mirror", 1, { { id = "glass", n = 6 }, { id = "silver_bar", n = 6 }, { id = "crystal", n = 4 } }, "alchemy")
 R("recall_stone", 3, { { id = "stone", n = 10 }, { id = "glow_dust", n = 1 } }, "alchemy")
 R("mana_crystal", 1, { { id = "crystal", n = 8 }, { id = "glow_dust", n = 4 } }, "alchemy")
+R("magic_essence", 2, { { id = "crystal", n = 3 }, { id = "glow_dust", n = 3 }, { id = "gold_bar", n = 1 } }, "alchemy")
 
 Recipes.list = list
 
@@ -1912,6 +1972,408 @@ return Recipes
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="15">
+        <Properties>
+          <string name="Name">Smelting</string>
+          <string name="Source"><![CDATA[--!strict
+--[[
+	Smelting — وصفات الفرن ووقوده.
+
+	الفرن ليس وصفة تصنيع عادية: له حالة مستمرة (وقود يحترق، وشريط تقدّم)
+	تعيش في العالم حتى وأنت بعيد عنه. لذلك وصفاته منفصلة عن Recipes.luau.
+]]
+
+local Items = require(script.Parent.Items)
+
+local Smelting = {}
+
+export type SmeltRecipe = { out: string, n: number, time: number }
+
+-- المُدخل -> الناتج. الزمن بالثواني وقوداً محترقاً.
+local recipes: { [string]: SmeltRecipe } = {
+	copper_ore = { out = "copper_bar", n = 1, time = 5 },
+	iron_ore = { out = "iron_bar", n = 1, time = 6 },
+	silver_ore = { out = "silver_bar", n = 1, time = 7 },
+	gold_ore = { out = "gold_bar", n = 1, time = 8 },
+	mythril_ore = { out = "mythril_bar", n = 1, time = 12 },
+	hellstone_ore = { out = "hellstone_bar", n = 1, time = 11 },
+
+	sand = { out = "glass", n = 1, time = 3 },
+	stone = { out = "stone_brick", n = 1, time = 3 },
+	sandstone = { out = "sand_brick", n = 1, time = 3 },
+	ice = { out = "ice_brick", n = 1, time = 3 },
+	clay = { out = "brick", n = 1, time = 4 },
+
+	leather = { out = "cooked_meat", n = 1, time = 7 },
+	herb = { out = "bread", n = 1, time = 6 },
+	mushroom = { out = "cooked_meat", n = 1, time = 7 },
+}
+
+-- الوقود: العنصر -> ثواني احتراق
+local fuels: { [string]: number } = {
+	coal = 60,
+	wood = 10,
+	plank = 8,
+	log = 12,
+	sapling = 2,
+	cactus = 5,
+	hellstone_ore = 90, -- يحترق طويلاً لكنه ثمين
+	torch = 3,
+}
+
+Smelting.recipes = recipes
+Smelting.fuels = fuels
+
+function Smelting.recipeFor(itemId: string?): SmeltRecipe?
+	if not itemId then return nil end
+	return recipes[itemId]
+end
+
+function Smelting.fuelValue(itemId: string?): number
+	if not itemId then return 0 end
+	return fuels[itemId] or 0
+end
+
+function Smelting.isFuel(itemId: string?): boolean
+	return Smelting.fuelValue(itemId) > 0
+end
+
+-- قائمة مرتّبة للعرض في الواجهة
+function Smelting.list(): { { input: string, out: string, n: number, time: number } }
+	local out = {}
+	for input, recipe in recipes do
+		if Items.get(input) and Items.get(recipe.out) then
+			table.insert(out, { input = input, out = recipe.out, n = recipe.n, time = recipe.time })
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.time ~= b.time then return a.time < b.time end
+		return a.input < b.input
+	end)
+	return out
+end
+
+return Smelting
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="16">
+        <Properties>
+          <string name="Name">Upgrades</string>
+          <string name="Source"><![CDATA[--!strict
+--[[
+	Upgrades — نظام تطوير الأدوات والدروع وسِحرها.
+
+	لكل غرض قابل للتطوير حقل `up` صغير داخل كومته:
+		{ lvl = 0..5, aff = "sharp" }
+
+	* **التطوير (+N)** على السندان: زيادة خطية مضمونة النجاح — لا كسر ولا عشوائية.
+	* **السحر (صفة)** على طاولة السحر: صفة واحدة عشوائية، يمكن إعادة رميها
+	  كما في تيراريا. العشوائية هنا مقبولة لأنها قابلة للإعادة دائماً.
+
+	كل الأغراض القابلة للتطوير حدّ تكديسها 1، فلا مشكلة اندماج أكوام مختلفة.
+]]
+
+local Items = require(script.Parent.Items)
+
+local Upgrades = {}
+
+export type Upgrade = { lvl: number, aff: string? }
+export type Stack = { id: string, n: number, up: Upgrade? }
+
+Upgrades.MAX_LEVEL = 5
+
+-- ===== الصفات (السحر) =====
+
+export type Affix = {
+	id: string,
+	name: string,
+	color: Color3,
+	desc: string,
+	weight: number,
+	damage: number?, -- مضاعف
+	useTime: number?, -- مضاعف (أقل = أسرع)
+	knockback: number?, -- مضاعف
+	crit: number?, -- إضافة مطلقة
+	lifesteal: number?, -- نسبة الضرر التي تُشفى
+	mining: number?, -- مضاعف سرعة التعدين
+	fortune: number?, -- احتمال إسقاط مضاعف
+	reach: number?, -- بلاطات إضافية
+	defense: number?, -- إضافة مطلقة
+	speed: number?, -- مضاعف سرعة الحركة
+	thorns: number?, -- نسبة الضرر المرتد
+	regen: number?, -- حياة/ثانية
+	mana: number?, -- مانا قصوى إضافية
+}
+
+local function C(r: number, g: number, b: number): Color3
+	return Color3.fromRGB(r, g, b)
+end
+
+local WEAPON_AFFIXES: { Affix } = {
+	{ id = "sharp", name = "حادّ", color = C(240, 120, 110), desc = "+15% ضرر", weight = 26, damage = 1.15 },
+	{ id = "swift", name = "سريع", color = C(140, 220, 240), desc = "-14% زمن الاستخدام", weight = 24, useTime = 0.86 },
+	{ id = "deadly", name = "فتّاك", color = C(250, 200, 90), desc = "+12% فرصة ضربة حرجة", weight = 18, crit = 0.12 },
+	{ id = "brutal", name = "عنيف", color = C(230, 150, 90), desc = "+60% ارتداد و+6% ضرر", weight = 18, knockback = 1.6, damage = 1.06 },
+	{ id = "vampiric", name = "مصّاص", color = C(200, 110, 200), desc = "يشفيك 8% من الضرر", weight = 14, lifesteal = 0.08 },
+}
+
+local TOOL_AFFIXES: { Affix } = {
+	{ id = "efficient", name = "كفؤ", color = C(150, 230, 160), desc = "+28% سرعة تعدين", weight = 28, mining = 1.28 },
+	{ id = "fortune", name = "موفّق", color = C(250, 210, 110), desc = "25% فرصة إسقاط مضاعف", weight = 20, fortune = 0.25 },
+	{ id = "far", name = "بعيد المدى", color = C(160, 200, 250), desc = "+1.5 بلاطة مدى", weight = 20, reach = 1.5 },
+	{ id = "keen", name = "ماضٍ", color = C(240, 140, 120), desc = "+18% ضرر", weight = 18, damage = 1.18 },
+	{ id = "tireless", name = "لا يكلّ", color = C(200, 220, 240), desc = "+14% سرعة تعدين و-8% زمن استخدام", weight = 14, mining = 1.14, useTime = 0.92 },
+}
+
+local ARMOR_AFFIXES: { Affix } = {
+	{ id = "tough", name = "صلب", color = C(190, 195, 210), desc = "+3 دفاع", weight = 28, defense = 3 },
+	{ id = "agile", name = "رشيق", color = C(140, 230, 170), desc = "+8% سرعة حركة", weight = 22, speed = 1.08 },
+	{ id = "thorny", name = "شائك", color = C(230, 140, 140), desc = "يرتدّ 25% من الضرر", weight = 18, thorns = 0.25 },
+	{ id = "vital", name = "حيويّ", color = C(240, 130, 170), desc = "+1 حياة/ثانية", weight = 18, regen = 1 },
+	{ id = "arcane", name = "غامض", color = C(150, 160, 250), desc = "+20 مانا قصوى", weight = 14, mana = 20 },
+}
+
+local byId: { [string]: Affix } = {}
+for _, pool in { WEAPON_AFFIXES, TOOL_AFFIXES, ARMOR_AFFIXES } do
+	for _, affix in pool do
+		byId[affix.id] = affix
+	end
+end
+
+Upgrades.pools = { weapon = WEAPON_AFFIXES, tool = TOOL_AFFIXES, armor = ARMOR_AFFIXES }
+
+function Upgrades.affix(id: string?): Affix?
+	if not id then return nil end
+	return byId[id]
+end
+
+-- ===== الأهلية =====
+
+-- فئة التطوير التي ينتمي إليها العنصر (أو nil إن كان غير قابل للتطوير)
+function Upgrades.categoryOf(itemId: string?): string?
+	if not itemId then return nil end
+	local item = Items.get(itemId)
+	if not item then return nil end
+	if item.cat == "weapon" then return "weapon" end
+	if item.cat == "tool" then return "tool" end
+	if item.cat == "armor" then return "armor" end
+	return nil
+end
+
+function Upgrades.canModify(itemId: string?): boolean
+	return Upgrades.categoryOf(itemId) ~= nil
+end
+
+function Upgrades.levelOf(stack: Stack?): number
+	if stack and stack.up then return math.clamp(stack.up.lvl or 0, 0, Upgrades.MAX_LEVEL) end
+	return 0
+end
+
+function Upgrades.affixOf(stack: Stack?): Affix?
+	if stack and stack.up then return Upgrades.affix(stack.up.aff) end
+	return nil
+end
+
+-- ===== حساب الإحصاءات =====
+
+-- كل مستوى تطوير يضيف 12% للأرقام النسبية
+local function levelScale(level: number): number
+	return 1 + 0.12 * level
+end
+Upgrades.levelScale = levelScale
+
+function Upgrades.damage(stack: Stack?): number
+	if not stack then return 0 end
+	local item = Items.get(stack.id)
+	if not item or not item.damage then return 0 end
+	local value = item.damage * levelScale(Upgrades.levelOf(stack))
+	local affix = Upgrades.affixOf(stack)
+	if affix and affix.damage then value *= affix.damage end
+	return math.floor(value + 0.5)
+end
+
+function Upgrades.useTime(stack: Stack?): number
+	if not stack then return 0.35 end
+	local item = Items.get(stack.id)
+	local base = (item and item.useTime) or 0.35
+	local affix = Upgrades.affixOf(stack)
+	if affix and affix.useTime then base *= affix.useTime end
+	-- التطوير يسرّع قليلاً أيضاً
+	base *= 1 - 0.03 * Upgrades.levelOf(stack)
+	return math.max(0.08, base)
+end
+
+function Upgrades.knockback(stack: Stack?): number
+	if not stack then return 3 end
+	local item = Items.get(stack.id)
+	local base = (item and item.knockback) or 3
+	local affix = Upgrades.affixOf(stack)
+	if affix and affix.knockback then base *= affix.knockback end
+	return base
+end
+
+function Upgrades.crit(stack: Stack?): number
+	if not stack then return 0.03 end
+	local item = Items.get(stack.id)
+	local base = (item and item.crit) or 0.03
+	local affix = Upgrades.affixOf(stack)
+	if affix and affix.crit then base += affix.crit end
+	return math.clamp(base, 0, 0.95)
+end
+
+function Upgrades.lifesteal(stack: Stack?): number
+	local affix = Upgrades.affixOf(stack)
+	return if affix and affix.lifesteal then affix.lifesteal else 0
+end
+
+-- قوة معول/فأس إضافية من التطوير
+function Upgrades.powerBonus(stack: Stack?): number
+	return 4 * Upgrades.levelOf(stack)
+end
+
+function Upgrades.miningMultiplier(stack: Stack?): number
+	local value = 1 + 0.05 * Upgrades.levelOf(stack)
+	local affix = Upgrades.affixOf(stack)
+	if affix and affix.mining then value *= affix.mining end
+	return value
+end
+
+function Upgrades.fortune(stack: Stack?): number
+	local affix = Upgrades.affixOf(stack)
+	return if affix and affix.fortune then affix.fortune else 0
+end
+
+function Upgrades.reachBonus(stack: Stack?): number
+	local affix = Upgrades.affixOf(stack)
+	return if affix and affix.reach then affix.reach else 0
+end
+
+function Upgrades.defense(stack: Stack?): number
+	if not stack then return 0 end
+	local item = Items.get(stack.id)
+	if not item or not item.defense then return 0 end
+	local value = item.defense * levelScale(Upgrades.levelOf(stack))
+	local affix = Upgrades.affixOf(stack)
+	if affix and affix.defense then value += affix.defense end
+	return math.floor(value + 0.5)
+end
+
+-- مجموع تأثيرات الدرع الملبوس
+export type ArmorBonus = { defense: number, speed: number, thorns: number, regen: number, mana: number }
+
+function Upgrades.armorBonus(armor: { [string]: Stack? }): ArmorBonus
+	local bonus: ArmorBonus = { defense = 0, speed = 1, thorns = 0, regen = 0, mana = 0 }
+	for _, stack in armor do
+		if stack then
+			bonus.defense += Upgrades.defense(stack)
+			local affix = Upgrades.affixOf(stack)
+			if affix then
+				if affix.speed then bonus.speed *= affix.speed end
+				if affix.thorns then bonus.thorns += affix.thorns end
+				if affix.regen then bonus.regen += affix.regen end
+				if affix.mana then bonus.mana += affix.mana end
+			end
+		end
+	end
+	return bonus
+end
+
+-- ===== التكاليف =====
+
+export type Cost = { material: string, amount: number, coins: number }
+
+function Upgrades.upgradeCost(itemId: string, level: number): Cost?
+	local item = Items.get(itemId)
+	if not item then return nil end
+	if level >= Upgrades.MAX_LEVEL then return nil end
+	local target = level + 1
+	return {
+		material = "upgrade_core",
+		amount = target,
+		coins = 40 * target * (1 + item.rarity),
+	}
+end
+
+function Upgrades.enchantCost(itemId: string): Cost?
+	local item = Items.get(itemId)
+	if not item then return nil end
+	return {
+		material = "magic_essence",
+		amount = 2 + item.rarity,
+		coins = 60 * (1 + item.rarity),
+	}
+end
+
+-- اختيار صفة عشوائية موزونة (تُمرَّر قيمة عشوائية 0..1 لتبقى الدالة نقية)
+function Upgrades.rollAffix(category: string, roll: number, exclude: string?): string?
+	local pool = Upgrades.pools[category]
+	if not pool then return nil end
+
+	local total = 0
+	for _, affix in pool do
+		if affix.id ~= exclude then total += affix.weight end
+	end
+	if total <= 0 then
+		return pool[1].id
+	end
+
+	local pick = roll * total
+	for _, affix in pool do
+		if affix.id ~= exclude then
+			pick -= affix.weight
+			if pick <= 0 then return affix.id end
+		end
+	end
+	return pool[#pool].id
+end
+
+-- ===== العرض =====
+
+function Upgrades.displayName(stack: Stack?): string
+	if not stack then return "" end
+	local item = Items.get(stack.id)
+	local name = if item then item.name else stack.id
+	local affix = Upgrades.affixOf(stack)
+	if affix then
+		name = affix.name .. " " .. name
+	end
+	local level = Upgrades.levelOf(stack)
+	if level > 0 then
+		name ..= " +" .. level
+	end
+	return name
+end
+
+function Upgrades.displayColor(stack: Stack?): Color3
+	local affix = Upgrades.affixOf(stack)
+	if affix then return affix.color end
+	local item = if stack then Items.get(stack.id) else nil
+	if item then
+		return Items.RARITY_COLORS[item.rarity] or Color3.fromRGB(236, 236, 236)
+	end
+	return Color3.fromRGB(236, 236, 236)
+end
+
+-- هل هذه الكومة مطوّرة أو مسحورة؟ (لإظهار توهج في الواجهة)
+function Upgrades.isModified(stack: Stack?): boolean
+	return Upgrades.levelOf(stack) > 0 or Upgrades.affixOf(stack) ~= nil
+end
+
+-- تنظيف حقل التطوير قبل الحفظ/الإرسال (يُعيد nil إن كان بلا معنى)
+function Upgrades.normalize(up: any): Upgrade?
+	if type(up) ~= "table" then return nil end
+	local level = tonumber(up.lvl) or 0
+	level = math.clamp(math.floor(level), 0, Upgrades.MAX_LEVEL)
+	local affixId = if type(up.aff) == "string" and byId[up.aff] then up.aff else nil
+	if level == 0 and affixId == nil then return nil end
+	return { lvl = level, aff = affixId }
+end
+
+return Upgrades
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="17">
         <Properties>
           <string name="Name">Util</string>
           <string name="Source"><![CDATA[--!strict
@@ -2025,7 +2487,7 @@ return Util
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="16">
+      <Item class="ModuleScript" referent="18">
         <Properties>
           <string name="Name">World</string>
           <string name="Source"><![CDATA[--!strict
@@ -2330,7 +2792,7 @@ return World
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="17">
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">WorldGen</string>
           <string name="Source"><![CDATA[--!strict
@@ -2717,11 +3179,11 @@ return WorldGen
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="18">
+  <Item class="ServerScriptService" referent="20">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="19">
+    <Item class="Script" referent="21">
       <Properties>
         <string name="Name">Server</string>
         <token name="RunContext">0</token>
@@ -2748,6 +3210,7 @@ Services.World = require(script.WorldService)
 Services.Player = require(script.PlayerService)
 Services.Entity = require(script.EntityService)
 Services.Craft = require(script.CraftService)
+Services.Station = require(script.StationService)
 
 -- لا شخصيات Roblox: اللعبة ثنائية الأبعاد بالكامل عبر الواجهة.
 -- نضبطها هنا لا في ملف Rojo لأنها خاصية على خدمة Players وليست StarterPlayer.
@@ -2763,6 +3226,7 @@ Services.World.start()
 Services.Player.start()
 Services.Entity.start()
 Services.Craft.start()
+Services.Station.start()
 
 print(string.format(
 	"[TerraCraft] الخادم جاهز | البذرة: %d | نقطة الظهور: %d, %d",
@@ -2772,7 +3236,7 @@ print(string.format(
 ))
 ]]></string>
       </Properties>
-      <Item class="ModuleScript" referent="20">
+      <Item class="ModuleScript" referent="22">
         <Properties>
           <string name="Name">CraftService</string>
           <string name="Source"><![CDATA[--!strict
@@ -2947,7 +3411,7 @@ return CraftService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="21">
+      <Item class="ModuleScript" referent="23">
         <Properties>
           <string name="Name">EntityService</string>
           <string name="Source"><![CDATA[--!strict
@@ -2970,6 +3434,7 @@ local Items = require(Shared.Items)
 local Mobs = require(Shared.Mobs)
 local Net = require(Shared.Net)
 local Physics = require(Shared.Physics)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 local WorldGen = require(Shared.WorldGen)
@@ -3219,13 +3684,16 @@ function EntityService.damageMob(entity: Entity, amount: number, kbx: number, kb
 end
 
 -- ضربة قريبة من لاعب
-function EntityService.meleeHit(player: Player, hx: number, hy: number, reach: number, damage: number, knockback: number, dx: number, dy: number, crit: boolean)
+-- يُعيد مجموع الضرر الموقع (يحتاجه امتصاص الحياة في PlayerService)
+function EntityService.meleeHit(player: Player, hx: number, hy: number, reach: number, damage: number, knockback: number, dx: number, dy: number, crit: boolean): number
 	local hit = false
+	local dealt = 0
 	for _, entity in entities do
 		if entity.kind == "mob" and not entity.dead then
 			local body = entity.body
 			if Util.dist(body.x, body.y, hx, hy) <= reach + math.max(body.w, body.h) / 2 then
 				EntityService.damageMob(entity, damage, dx * knockback * 3, dy * knockback * 1.4 - 5, player, crit)
+				dealt += damage
 				hit = true
 			end
 		end
@@ -3242,6 +3710,8 @@ function EntityService.meleeHit(player: Player, hx: number, hy: number, reach: n
 			if drop then EntityService.spawnItem(tx + 0.5, ty + 0.5, drop, 1) end
 		end
 	end
+
+	return dealt
 end
 
 -- ===== الذكاء الاصطناعي =====
@@ -3276,6 +3746,12 @@ local function tryAttackPlayer(entity: Entity, dt: number)
 				local dir = Util.sign(body.x - entity.body.x)
 				if dir == 0 then dir = entity.facing end
 				Services.Player.damage(player, entity.damage, def.name, dir * 9, -8)
+
+				-- صفة «شائك» على الدرع ترتدّ جزءاً من الضرر
+				local thorns = Upgrades.armorBonus(state.armor).thorns
+				if thorns > 0 then
+					EntityService.damageMob(entity, entity.damage * thorns, -dir * 4, -3, player, false)
+				end
 				return
 			end
 		end
@@ -3923,7 +4399,7 @@ return EntityService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="22">
+      <Item class="ModuleScript" referent="24">
         <Properties>
           <string name="Name">PlayerService</string>
           <string name="Source"><![CDATA[--!strict
@@ -3946,6 +4422,7 @@ local Inventory = require(Shared.Inventory)
 local Items = require(Shared.Items)
 local Net = require(Shared.Net)
 local Physics = require(Shared.Physics)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 
@@ -4012,20 +4489,18 @@ function PlayerService.buffAggregate(player: Player): Buffs.Aggregate
 end
 
 function PlayerService.defense(state: PlayerState): number
-	local total = 0
+	-- Upgrades.armorBonus يحسب دفاع كل قطعة مع تطويرها وصفتها السحرية
+	local total = Upgrades.armorBonus(state.armor).defense
 	local setName: string? = nil
 	local setCount = 0
 	for _, slot in { "head", "chest", "feet" } do
 		local stack = state.armor[slot]
 		if stack then
 			local item = Items.get(stack.id)
-			if item and item.defense then
-				total += item.defense
-				if item.setBonus then
-					if setName == nil or setName == item.setBonus then
-						setName = item.setBonus
-						setCount += 1
-					end
+			if item and item.setBonus then
+				if setName == nil or setName == item.setBonus then
+					setName = item.setBonus
+					setCount += 1
 				end
 			end
 		end
@@ -4035,6 +4510,11 @@ function PlayerService.defense(state: PlayerState): number
 	end
 	total += Buffs.aggregate(state.buffs).defense
 	return total
+end
+
+-- المانا القصوى الفعّالة = المحفوظة + مكافآت الدرع المسحور
+function PlayerService.effectiveMaxMana(state: PlayerState): number
+	return state.maxMana + Upgrades.armorBonus(state.armor).mana
 end
 
 function PlayerService.syncStats(player: Player)
@@ -4050,7 +4530,7 @@ function PlayerService.syncStats(player: Player)
 		hp = math.floor(state.hp + 0.5),
 		maxHp = state.maxHp,
 		mana = math.floor(state.mana + 0.5),
-		maxMana = state.maxMana,
+		maxMana = PlayerService.effectiveMaxMana(state),
 		food = math.floor(state.food + 0.5),
 		defense = PlayerService.defense(state),
 		dead = state.dead,
@@ -4267,10 +4747,11 @@ local function attack(player: Player, state: PlayerState, aimX: number, aimY: nu
 	local crit = 0.03
 
 	if item then
-		damage = item.damage or damage
-		useTime = item.useTime or useTime
-		knockback = item.knockback or knockback
-		crit = item.crit or crit
+		-- كل هذه تمرّ عبر Upgrades لتشمل مستوى التطوير والصفة السحرية
+		damage = if item.damage then Upgrades.damage(stack) else damage
+		useTime = Upgrades.useTime(stack)
+		knockback = Upgrades.knockback(stack)
+		crit = Upgrades.crit(stack)
 	end
 
 	if now - state.lastAttack < useTime * 0.85 then return end
@@ -4340,13 +4821,21 @@ local function attack(player: Player, state: PlayerState, aimX: number, aimY: nu
 	end
 
 	-- ضربة قريبة
-	local reach = 3.0
+	local reach = 3.0 + Upgrades.reachBonus(stack) * 0.5
 	local hitX = state.body.x + dx * reach * 0.6
 	local hitY = state.body.y + dy * reach * 0.6
 	local isCrit = math.random() < crit
 	local finalDamage = if isCrit then damage * 2 else damage
 
-	Services.Entity.meleeHit(player, hitX, hitY, reach, finalDamage, knockback, dx, dy, isCrit)
+	local dealt = Services.Entity.meleeHit(player, hitX, hitY, reach, finalDamage, knockback, dx, dy, isCrit)
+
+	-- صفة «مصّاص»: تشفي نسبة من الضرر الموقع
+	local lifesteal = Upgrades.lifesteal(stack)
+	if lifesteal > 0 and dealt > 0 then
+		local healed = math.max(1, math.floor(dealt * lifesteal))
+		state.hp = math.min(state.maxHp, state.hp + healed)
+		Net.get("Hit"):FireClient(player, { kind = "heal", x = state.body.x, y = state.body.y, amount = healed })
+	end
 	Net.get("Fx"):FireAllClients({
 		kind = "swing", x = state.body.x, y = state.body.y,
 		dx = dx, dy = dy, item = if item then item.id else "hand", player = player.UserId,
@@ -4488,7 +4977,8 @@ local function handlePlayerState(player: Player, x: number, y: number, vx: numbe
 	local body = state.body
 	local dt = math.max(1 / 60, 1 / Config.STATE_HZ)
 	local agg = Buffs.aggregate(state.buffs)
-	local maxStep = (Config.WALK_SPEED * agg.speed + Config.MAX_FALL) * dt * 2.2 + 2.5
+	local armorSpeed = Upgrades.armorBonus(state.armor).speed
+	local maxStep = (Config.WALK_SPEED * agg.speed * armorSpeed + Config.MAX_FALL) * dt * 2.2 + 2.5
 	local delta = Util.dist(body.x, body.y, x, y)
 
 	if delta > maxStep then
@@ -4542,6 +5032,7 @@ local function broadcastPeers()
 			hp = math.floor(state.hp / math.max(1, state.maxHp) * 100),
 			d = state.dead,
 			it = if state.slots[state.hotbar] then (state.slots[state.hotbar] :: Inventory.Stack).id else "",
+			iu = Upgrades.isModified(state.slots[state.hotbar]),
 			hd = if state.armor.head then (state.armor.head :: Inventory.Stack).id else "",
 			ch = if state.armor.chest then (state.armor.chest :: Inventory.Stack).id else "",
 		})
@@ -4579,16 +5070,17 @@ local function tickPlayer(state: PlayerState, dt: number)
 		state.hp -= Config.STARVE_DPS * dt
 	end
 
-	-- تجدد الحياة
+	-- تجدد الحياة (يشمل صفة «حيويّ» على الدرع)
+	local armorBonus = Upgrades.armorBonus(state.armor)
 	if os.clock() - state.lastDamage > Config.HP_REGEN_DELAY and state.food > 10 then
-		local regen = Config.HP_REGEN * (state.food / Config.FOOD_MAX) + agg.regen
+		local regen = Config.HP_REGEN * (state.food / Config.FOOD_MAX) + agg.regen + armorBonus.regen
 		state.hp = math.min(state.maxHp, state.hp + regen * dt)
 	elseif agg.regen > 0 then
 		state.hp = math.min(state.maxHp, state.hp + agg.regen * dt)
 	end
 
-	-- المانا
-	state.mana = math.min(state.maxMana, state.mana + Config.MANA_REGEN * dt)
+	-- المانا (السقف يشمل مكافأة الدرع المسحور)
+	state.mana = math.min(PlayerService.effectiveMaxMana(state), state.mana + Config.MANA_REGEN * dt)
 
 	-- ضرر مستمر من التعزيزات السلبية
 	if agg.dps > 0 then
@@ -4625,9 +5117,16 @@ end
 -- ===== الحفظ =====
 
 local function serialize(state: PlayerState): any
-	local armor = {}
+	local armor: { [string]: any } = {}
 	for slot, stack in state.armor do
-		if stack then armor[slot] = stack.id end
+		if stack then
+			local entry: { any } = { stack.id }
+			if stack.up then
+				entry[2] = stack.up.lvl
+				entry[3] = stack.up.aff or ""
+			end
+			armor[slot] = entry
+		end
 	end
 	return {
 		v = 1,
@@ -4719,9 +5218,16 @@ local function onPlayerAdded(player: Player)
 	if type(saved) == "table" then
 		state.slots = Inventory.deserialize(saved.inv)
 		if type(saved.armor) == "table" then
-			for slot, id in saved.armor do
+			for slot, entry in saved.armor do
+				-- الصيغة القديمة نص، والحالية مصفوفة تحمل التطوير
+				local id = if type(entry) == "string" then entry
+					elseif type(entry) == "table" then entry[1] else nil
 				if type(id) == "string" and Items.get(id) then
-					state.armor[slot] = { id = id, n = 1 }
+					local stack: Inventory.Stack = { id = id, n = 1 }
+					if type(entry) == "table" and type(entry[2]) == "number" then
+						stack.up = Upgrades.normalize({ lvl = entry[2], aff = entry[3] })
+					end
+					state.armor[slot] = stack
 				end
 			end
 		end
@@ -4844,7 +5350,7 @@ return PlayerService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="23">
+      <Item class="ModuleScript" referent="25">
         <Properties>
           <string name="Name">SaveService</string>
           <string name="Source"><![CDATA[--!strict
@@ -4974,7 +5480,7 @@ return SaveService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="24">
+      <Item class="ModuleScript" referent="26">
         <Properties>
           <string name="Name">Services</string>
           <string name="Source"><![CDATA[--!strict
@@ -4992,12 +5498,616 @@ Services.Player = nil :: any
 Services.Entity = nil :: any
 Services.Combat = nil :: any
 Services.Craft = nil :: any
+Services.Station = nil :: any
 
 return Services
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="25">
+      <Item class="ModuleScript" referent="27">
+        <Properties>
+          <string name="Name">StationService</string>
+          <string name="Source"><![CDATA[--!strict
+--[[
+	StationService — المحطات ذات الحالة في العالم.
+
+	* **الفرن**: كيان بلاطة حقيقي له مُدخل ووقود وناتج وشريط تقدّم. يستمر في
+	  الصهر وأنت بعيد عنه، وتُحفظ محتوياته مع تعديلات العالم، وتتناثر عند كسره.
+	* **السندان**: تطوير الأدوات والدروع (+1 حتى +5) — مضمون النجاح.
+	* **طاولة السحر**: منح صفة سحرية عشوائية قابلة لإعادة الرمي.
+
+	كل شيء يُتحقق منه على الخادم: وجود البلاطة، قرب اللاعب، ملكية العناصر،
+	وكفاية المواد والعملات.
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Blocks = require(Shared.Blocks)
+local Config = require(Shared.Config)
+local Inventory = require(Shared.Inventory)
+local Items = require(Shared.Items)
+local Net = require(Shared.Net)
+local Smelting = require(Shared.Smelting)
+local Upgrades = require(Shared.Upgrades)
+local Util = require(Shared.Util)
+local World = require(Shared.World)
+
+local Services = require(script.Parent.Services)
+
+local StationService = {}
+
+local USE_RANGE = 9 -- أقصى مسافة للتفاعل مع محطة
+local TICK = 0.25
+local PUSH_HZ = 5 -- تحديثات الواجهة للمشاهدين
+
+export type Furnace = {
+	x: number,
+	y: number,
+	input: Inventory.Stack?,
+	fuel: Inventory.Stack?,
+	output: Inventory.Stack?,
+	burn: number, -- ثواني وقود متبقية
+	burnMax: number,
+	progress: number, -- ثواني صهر متراكمة
+	progressMax: number,
+}
+
+local furnaces: { [string]: Furnace } = {}
+-- اللاعب -> المحطة المفتوحة حالياً
+local viewing: { [Player]: { x: number, y: number, kind: string } } = {}
+
+local function key(x: number, y: number): string
+	return x .. "," .. y
+end
+
+-- ===== أدوات =====
+
+local function netStack(stack: Inventory.Stack?): any
+	if not stack then return nil end
+	local out = { id = stack.id, n = stack.n }
+	if stack.up then
+		out.lvl = stack.up.lvl
+		out.aff = stack.up.aff or ""
+	end
+	return out
+end
+
+local function stationAt(x: number, y: number): string?
+	local world = Services.World.getWorld()
+	local block = Blocks.get(World.fg(world, x, y))
+	return block.station
+end
+
+local function playerNear(player: Player, x: number, y: number): boolean
+	local state = Services.Player.get(player)
+	if not state or state.dead then return false end
+	return Util.dist(state.body.x, state.body.y, x + 0.5, y + 0.5) <= USE_RANGE
+end
+
+local function getFurnace(x: number, y: number, create: boolean?): Furnace?
+	local k = key(x, y)
+	local furnace = furnaces[k]
+	if furnace then return furnace end
+	if not create then return nil end
+	if stationAt(x, y) ~= "furnace" then return nil end
+	furnace = {
+		x = x, y = y,
+		input = nil, fuel = nil, output = nil,
+		burn = 0, burnMax = 0, progress = 0, progressMax = 0,
+	}
+	furnaces[k] = furnace
+	return furnace
+end
+
+-- ===== إرسال الحالة =====
+
+local function buildPayload(player: Player, x: number, y: number, kind: string): any
+	local payload: any = {
+		open = true,
+		kind = kind,
+		x = x, y = y,
+	}
+
+	if kind == "furnace" then
+		local furnace = getFurnace(x, y, true)
+		if furnace then
+			payload.input = netStack(furnace.input)
+			payload.fuel = netStack(furnace.fuel)
+			payload.output = netStack(furnace.output)
+			payload.burn = math.floor(furnace.burn * 10) / 10
+			payload.burnMax = furnace.burnMax
+			payload.progress = math.floor(furnace.progress * 100) / 100
+			payload.progressMax = furnace.progressMax
+		end
+	end
+
+	return payload
+end
+
+local function pushState(player: Player)
+	local view = viewing[player]
+	if not view then return end
+	Net.get("Station"):FireClient(player, buildPayload(player, view.x, view.y, view.kind))
+end
+
+function StationService.close(player: Player, silent: boolean?)
+	viewing[player] = nil
+	if not silent then
+		Net.get("Station"):FireClient(player, { open = false })
+	end
+end
+
+-- ===== محاكاة الفرن =====
+
+local function outputAccepts(furnace: Furnace, itemId: string, count: number): boolean
+	local output = furnace.output
+	if not output then return true end
+	if output.id ~= itemId then return false end
+	return output.n + count <= Items.maxStack(itemId)
+end
+
+local function stepFurnace(furnace: Furnace, dt: number): boolean
+	local changed = false
+
+	-- الوقود المشتعل يستمر حتى ينفد
+	if furnace.burn > 0 then
+		furnace.burn = math.max(0, furnace.burn - dt)
+		changed = true
+	end
+
+	local recipe = Smelting.recipeFor(if furnace.input then (furnace.input :: Inventory.Stack).id else nil)
+	local canWork = recipe ~= nil and outputAccepts(furnace, (recipe :: Smelting.SmeltRecipe).out, (recipe :: Smelting.SmeltRecipe).n)
+
+	if not canWork then
+		if furnace.progress > 0 then
+			furnace.progress = 0
+			furnace.progressMax = 0
+			changed = true
+		end
+		return changed
+	end
+
+	local smelt = recipe :: Smelting.SmeltRecipe
+	furnace.progressMax = smelt.time
+
+	-- أشعل وقوداً جديداً عند الحاجة
+	if furnace.burn <= 0 then
+		local fuel = furnace.fuel
+		local value = Smelting.fuelValue(if fuel then (fuel :: Inventory.Stack).id else nil)
+		if value > 0 and fuel then
+			furnace.burn = value
+			furnace.burnMax = value
+			fuel.n -= 1
+			if fuel.n <= 0 then furnace.fuel = nil end
+			changed = true
+		else
+			-- لا وقود: يبرد التقدّم تدريجياً بدل أن يضيع فوراً
+			if furnace.progress > 0 then
+				furnace.progress = math.max(0, furnace.progress - dt * 0.5)
+				changed = true
+			end
+			return changed
+		end
+	end
+
+	furnace.progress += dt
+	changed = true
+
+	if furnace.progress >= smelt.time then
+		furnace.progress -= smelt.time
+		local input = furnace.input
+		if input then
+			input.n -= 1
+			if input.n <= 0 then furnace.input = nil end
+		end
+		if furnace.output then
+			(furnace.output :: Inventory.Stack).n += smelt.n
+		else
+			furnace.output = { id = smelt.out, n = smelt.n }
+		end
+	end
+
+	return changed
+end
+
+-- ===== نقل العناصر =====
+
+local function handleGive(player: Player, x: number, y: number, playerSlot: number, target: string)
+	local state = Services.Player.get(player)
+	if not state or not playerNear(player, x, y) then return end
+	if stationAt(x, y) ~= "furnace" then return end
+	if playerSlot < 1 or playerSlot > Config.INV_SLOTS then return end
+
+	local stack = state.slots[playerSlot]
+	if not stack then return end
+
+	local furnace = getFurnace(x, y, true)
+	if not furnace then return end
+
+	if target == "input" then
+		if not Smelting.recipeFor(stack.id) then
+			Net.get("Notify"):FireClient(player, { text = "هذا العنصر لا يُصهر", color = { 230, 160, 90 } })
+			return
+		end
+	elseif target == "fuel" then
+		if not Smelting.isFuel(stack.id) then
+			Net.get("Notify"):FireClient(player, { text = "هذا العنصر ليس وقوداً", color = { 230, 160, 90 } })
+			return
+		end
+	else
+		return -- الناتج للأخذ فقط
+	end
+
+	local slot = if target == "input" then furnace.input else furnace.fuel
+	local max = Items.maxStack(stack.id)
+
+	if slot and slot.id ~= stack.id then
+		-- بادل المحتويين
+		local removed = Inventory.removeFromSlot(state.slots, playerSlot, stack.n)
+		local swapped: Inventory.Stack = { id = stack.id, n = removed }
+		if target == "input" then
+			state.slots[playerSlot] = slot
+			furnace.input = swapped
+		else
+			state.slots[playerSlot] = slot
+			furnace.fuel = swapped
+		end
+	else
+		local space = if slot then max - slot.n else max
+		local move = math.min(space, stack.n)
+		if move <= 0 then return end
+		Inventory.removeFromSlot(state.slots, playerSlot, move)
+		if slot then
+			slot.n += move
+		elseif target == "input" then
+			furnace.input = { id = stack.id, n = move }
+		else
+			furnace.fuel = { id = stack.id, n = move }
+		end
+	end
+
+	Services.Player.syncInventory(player)
+	pushState(player)
+	StationService.markDirty(x, y)
+end
+
+local function handleTake(player: Player, x: number, y: number, source: string)
+	local state = Services.Player.get(player)
+	if not state or not playerNear(player, x, y) then return end
+
+	local furnace = getFurnace(x, y, false)
+	if not furnace then return end
+
+	local slot: Inventory.Stack? = nil
+	if source == "input" then slot = furnace.input
+	elseif source == "fuel" then slot = furnace.fuel
+	elseif source == "output" then slot = furnace.output
+	else return end
+	if not slot then return end
+
+	local leftover = Inventory.add(state.slots, slot.id, slot.n)
+	local taken = slot.n - leftover
+	if taken <= 0 then
+		Net.get("Notify"):FireClient(player, { text = "المخزون ممتلئ", color = { 230, 120, 100 } })
+		return
+	end
+
+	slot.n = leftover
+	if slot.n <= 0 then
+		if source == "input" then furnace.input = nil
+		elseif source == "fuel" then furnace.fuel = nil
+		else furnace.output = nil end
+	end
+
+	Services.Player.syncInventory(player)
+	pushState(player)
+	StationService.markDirty(x, y)
+end
+
+-- ===== التطوير والسحر =====
+
+local function payCost(state: any, cost: Upgrades.Cost): boolean
+	if Inventory.count(state.slots, cost.material) < cost.amount then return false end
+	if Inventory.count(state.slots, "coin") < cost.coins then return false end
+	Inventory.remove(state.slots, cost.material, cost.amount)
+	Inventory.remove(state.slots, "coin", cost.coins)
+	return true
+end
+
+local function handleUpgrade(player: Player, x: number, y: number, slotIndex: number)
+	local state = Services.Player.get(player)
+	if not state or not playerNear(player, x, y) then return end
+	if stationAt(x, y) ~= "anvil" then return end
+	if slotIndex < 1 or slotIndex > Config.INV_SLOTS then return end
+
+	local stack = state.slots[slotIndex]
+	if not stack then return end
+	if not Upgrades.canModify(stack.id) then
+		Net.get("Notify"):FireClient(player, { text = "هذا العنصر غير قابل للتطوير", color = { 230, 160, 90 } })
+		return
+	end
+
+	local level = Upgrades.levelOf(stack)
+	local cost = Upgrades.upgradeCost(stack.id, level)
+	if not cost then
+		Net.get("Notify"):FireClient(player, { text = "بلغ العنصر أقصى تطوير (+" .. Upgrades.MAX_LEVEL .. ")", color = { 240, 200, 110 } })
+		return
+	end
+
+	if not payCost(state, cost) then
+		Net.get("Notify"):FireClient(player, {
+			text = string.format("تحتاج %d × %s و %d عملة", cost.amount, Items.name(cost.material), cost.coins),
+			color = { 230, 120, 100 },
+		})
+		return
+	end
+
+	stack.up = { lvl = level + 1, aff = if stack.up then stack.up.aff else nil }
+	Services.Player.syncInventory(player)
+	Services.Player.syncStats(player)
+	Net.get("Notify"):FireClient(player, {
+		text = Upgrades.displayName(stack) .. " — تمّ التطوير!",
+		color = { 250, 210, 110 },
+	})
+	Net.get("Fx"):FireAllClients({ kind = "upgrade", x = state.body.x, y = state.body.y })
+end
+
+local function handleEnchant(player: Player, x: number, y: number, slotIndex: number)
+	local state = Services.Player.get(player)
+	if not state or not playerNear(player, x, y) then return end
+	if stationAt(x, y) ~= "enchant" then return end
+	if slotIndex < 1 or slotIndex > Config.INV_SLOTS then return end
+
+	local stack = state.slots[slotIndex]
+	if not stack then return end
+	local category = Upgrades.categoryOf(stack.id)
+	if not category then
+		Net.get("Notify"):FireClient(player, { text = "هذا العنصر غير قابل للسحر", color = { 230, 160, 90 } })
+		return
+	end
+
+	local cost = Upgrades.enchantCost(stack.id)
+	if not cost then return end
+	if not payCost(state, cost) then
+		Net.get("Notify"):FireClient(player, {
+			text = string.format("تحتاج %d × %s و %d عملة", cost.amount, Items.name(cost.material), cost.coins),
+			color = { 230, 120, 100 },
+		})
+		return
+	end
+
+	local current = if stack.up then stack.up.aff else nil
+	local affixId = Upgrades.rollAffix(category, math.random(), current)
+	stack.up = { lvl = Upgrades.levelOf(stack), aff = affixId }
+
+	Services.Player.syncInventory(player)
+	Services.Player.syncStats(player)
+	local affix = Upgrades.affix(affixId)
+	Net.get("Notify"):FireClient(player, {
+		text = Upgrades.displayName(stack) .. (if affix then " — " .. affix.desc else ""),
+		color = { 190, 150, 250 },
+	})
+	Net.get("Fx"):FireAllClients({ kind = "enchant", x = state.body.x, y = state.body.y })
+end
+
+-- ===== كسر البلاطة =====
+
+-- يُستدعى من WorldService قبل إزالة بلاطة: تتناثر محتويات الفرن
+function StationService.onBlockRemoved(x: number, y: number)
+	local k = key(x, y)
+	local furnace = furnaces[k]
+	if not furnace then return end
+	furnaces[k] = nil
+
+	for _, stack in { furnace.input, furnace.fuel, furnace.output } do
+		if stack then
+			Services.Entity.spawnItem(x + 0.5, y + 0.5, stack.id, stack.n)
+		end
+	end
+
+	for player, view in viewing do
+		if view.x == x and view.y == y then
+			StationService.close(player)
+		end
+	end
+	StationService.markDirty(x, y)
+end
+
+-- ===== الحفظ =====
+
+local dirtyRegions: { [string]: boolean } = {}
+
+function StationService.markDirty(x: number, y: number)
+	local rx = (x // Config.CHUNK) // Config.REGION
+	local ry = (y // Config.CHUNK) // Config.REGION
+	dirtyRegions[rx .. "," .. ry] = true
+end
+
+function StationService.consumeDirtyRegions(): { [string]: boolean }
+	local snapshot = dirtyRegions
+	dirtyRegions = {}
+	return snapshot
+end
+
+local function serializeStack(stack: Inventory.Stack?): any
+	if not stack then return nil end
+	local out: { any } = { stack.id, stack.n }
+	if stack.up then
+		out[3] = stack.up.lvl
+		out[4] = stack.up.aff or ""
+	end
+	return out
+end
+
+local function deserializeStack(data: any): Inventory.Stack?
+	if type(data) ~= "table" then return nil end
+	local id, n = data[1], data[2]
+	if type(id) ~= "string" or type(n) ~= "number" or n <= 0 then return nil end
+	if not Items.get(id) then return nil end
+	local stack: Inventory.Stack = { id = id, n = math.min(n, Items.maxStack(id)) }
+	if type(data[3]) == "number" and Upgrades.canModify(id) then
+		stack.up = Upgrades.normalize({ lvl = data[3], aff = data[4] })
+	end
+	return stack
+end
+
+function StationService.exportRegion(rx: number, ry: number): { [string]: any }?
+	local out: { [string]: any } = {}
+	local any = false
+	local minX = rx * Config.REGION * Config.CHUNK
+	local maxX = minX + Config.REGION * Config.CHUNK - 1
+	local minY = ry * Config.REGION * Config.CHUNK
+	local maxY = minY + Config.REGION * Config.CHUNK - 1
+
+	for k, furnace in furnaces do
+		if furnace.x >= minX and furnace.x <= maxX and furnace.y >= minY and furnace.y <= maxY then
+			if furnace.input or furnace.fuel or furnace.output or furnace.burn > 0 then
+				out[k] = {
+					i = serializeStack(furnace.input),
+					f = serializeStack(furnace.fuel),
+					o = serializeStack(furnace.output),
+					b = math.floor(furnace.burn),
+					bm = math.floor(furnace.burnMax),
+					p = math.floor(furnace.progress * 10) / 10,
+				}
+				any = true
+			end
+		end
+	end
+
+	return if any then out else nil
+end
+
+function StationService.importRegion(data: any)
+	if type(data) ~= "table" then return end
+	for k, entry in data do
+		if type(k) == "string" and type(entry) == "table" then
+			local parts = string.split(k, ",")
+			local x, y = tonumber(parts[1]), tonumber(parts[2])
+			if x and y then
+				furnaces[k] = {
+					x = x, y = y,
+					input = deserializeStack(entry.i),
+					fuel = deserializeStack(entry.f),
+					output = deserializeStack(entry.o),
+					burn = tonumber(entry.b) or 0,
+					burnMax = tonumber(entry.bm) or 0,
+					progress = tonumber(entry.p) or 0,
+					progressMax = 0,
+				}
+			end
+		end
+	end
+end
+
+-- ===== المعالجات =====
+
+local function handleOpen(player: Player, x: number, y: number)
+	if not playerNear(player, x, y) then
+		Net.get("Notify"):FireClient(player, { text = "اقترب من المحطة", color = { 220, 180, 100 } })
+		return
+	end
+	local kind = stationAt(x, y)
+	if not kind then return end
+
+	viewing[player] = { x = x, y = y, kind = kind }
+	if kind == "furnace" then
+		getFurnace(x, y, true)
+	end
+	pushState(player)
+end
+
+function StationService.start()
+	Net.get("Station").OnServerEvent:Connect(function(player, action, x, y, a, b)
+		if action == "close" then
+			StationService.close(player, true)
+			return
+		end
+		if type(x) ~= "number" or type(y) ~= "number" then return end
+		x, y = math.floor(x), math.floor(y)
+		if not World.inBounds(x, y) then return end
+
+		if action == "open" then
+			handleOpen(player, x, y)
+		elseif action == "give" then
+			if type(a) == "number" and type(b) == "string" then
+				handleGive(player, x, y, math.floor(a), b)
+			end
+		elseif action == "take" then
+			if type(a) == "string" then
+				handleTake(player, x, y, a)
+			end
+		elseif action == "upgrade" then
+			if type(a) == "number" then
+				handleUpgrade(player, x, y, math.floor(a))
+			end
+		elseif action == "enchant" then
+			if type(a) == "number" then
+				handleEnchant(player, x, y, math.floor(a))
+			end
+		end
+	end)
+
+	Players.PlayerRemoving:Connect(function(player)
+		viewing[player] = nil
+	end)
+
+	-- محاكاة الأفران
+	local accumulator = 0
+	local pushTimer = 0
+	RunService.Heartbeat:Connect(function(dt)
+		accumulator += dt
+		if accumulator >= TICK then
+			local step = accumulator
+			accumulator = 0
+			for _, furnace in furnaces do
+				local ok, err = pcall(stepFurnace, furnace, step)
+				if not ok then
+					warn("[StationService] خطأ في محاكاة الفرن: " .. tostring(err))
+				end
+			end
+		end
+
+		pushTimer += dt
+		if pushTimer >= 1 / PUSH_HZ then
+			pushTimer = 0
+			for player, view in viewing do
+				-- أغلق النافذة إن ابتعد اللاعب أو كُسرت المحطة
+				if not playerNear(player, view.x, view.y) or stationAt(view.x, view.y) ~= view.kind then
+					StationService.close(player)
+				else
+					pushState(player)
+				end
+			end
+		end
+	end)
+
+	-- حفظ دوري لحالات الأفران يُحرّكه WorldService عبر consumeDirtyRegions
+	task.spawn(function()
+		while true do
+			task.wait(20)
+			for _, furnace in furnaces do
+				if furnace.burn > 0 or furnace.progress > 0 then
+					StationService.markDirty(furnace.x, furnace.y)
+				end
+			end
+		end
+	end)
+end
+
+function StationService.furnaceCount(): number
+	local n = 0
+	for _ in furnaces do n += 1 end
+	return n
+end
+
+return StationService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="28">
         <Properties>
           <string name="Name">TimeService</string>
           <string name="Source"><![CDATA[--!strict
@@ -5118,7 +6228,7 @@ return TimeService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="26">
+      <Item class="ModuleScript" referent="29">
         <Properties>
           <string name="Name">WorldService</string>
           <string name="Source"><![CDATA[--!strict
@@ -5143,6 +6253,7 @@ local Inventory = require(Shared.Inventory)
 local Items = require(Shared.Items)
 local Mining = require(Shared.Mining)
 local Net = require(Shared.Net)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 local WorldGen = require(Shared.WorldGen)
@@ -5212,11 +6323,17 @@ local function ensureRegion(rx: number, ry: number)
 	regionState[key] = "loading"
 	local data = SaveService.loadRegion(rx, ry)
 	if type(data) == "table" then
-		for chunkKey, flat in data do
+		-- الصيغة الحالية: { tiles = {...}, stations = {...} }
+		-- الصيغة الأقدم: خريطة مسطّحة من مفتاح القطعة إلى التعديلات
+		local tiles = if type(data.tiles) == "table" then data.tiles else data
+		for chunkKey, flat in tiles do
 			if type(flat) == "table" then
 				local cx, cy = Chunk.parseKey(chunkKey)
 				World.applyEncodedDiff(world, cx, cy, flat)
 			end
+		end
+		if type(data.stations) == "table" and Services.Station then
+			Services.Station.importRegion(data.stations)
 		end
 	end
 	regionState[key] = "ready"
@@ -5228,6 +6345,13 @@ local function markDirty(cx: number, cy: number)
 end
 
 function WorldService.saveDirtyRegions()
+	-- ادمج المناطق التي غيّرتها المحطات (محتويات الأفران)
+	if Services.Station then
+		for key in Services.Station.consumeDirtyRegions() do
+			dirtyRegions[key] = true
+		end
+	end
+
 	local pending = {}
 	for key in dirtyRegions do
 		table.insert(pending, key)
@@ -5237,19 +6361,21 @@ function WorldService.saveDirtyRegions()
 	for _, key in pending do
 		local parts = string.split(key, ",")
 		local rx, ry = tonumber(parts[1]) or 0, tonumber(parts[2]) or 0
-		local payload: { [string]: { number } } = {}
+		local tiles: { [string]: { number } } = {}
 		local any = false
 		for cy = ry * Config.REGION, (ry + 1) * Config.REGION - 1 do
 			for cx = rx * Config.REGION, (rx + 1) * Config.REGION - 1 do
 				local flat = World.encodeDiff(world, cx, cy)
 				if flat and #flat > 0 then
-					payload[Chunk.keyOf(cx, cy)] = flat
+					tiles[Chunk.keyOf(cx, cy)] = flat
 					any = true
 				end
 			end
 		end
-		if any then
-			SaveService.saveRegion(rx, ry, payload)
+
+		local stations = if Services.Station then Services.Station.exportRegion(rx, ry) else nil
+		if any or stations then
+			SaveService.saveRegion(rx, ry, { tiles = tiles, stations = stations } :: any)
 		end
 		task.wait(0.12) -- احترام حدود معدّل DataStore
 	end
@@ -5435,12 +6561,13 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 	if not World.inBounds(x, y) then return end
 	if y >= Config.BEDROCK_Y then return end
 
-	local px, py = state.body.x, state.body.y
-	if Util.dist(px, py, x + 0.5, y + 0.5) > Config.REACH + 1.2 then return end
-	if not consumeToken(player) then return end
-
 	local held = Services.Player.heldItem(player)
 	local heldId = if held then held.id else nil
+
+	local px, py = state.body.x, state.body.y
+	local reach = Config.REACH + Upgrades.reachBonus(held) + 1.2
+	if Util.dist(px, py, x + 0.5, y + 0.5) > reach then return end
+	if not consumeToken(player) then return end
 
 	if layer == "wall" then
 		local item = if heldId then Items.get(heldId) else nil
@@ -5464,7 +6591,12 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 	if blockId == B.AIR or Blocks.isLiquid(blockId) then return end
 
 	local buffs = Services.Player.buffAggregate(player)
-	local required = WorldService.breakTime(blockId, heldId, buffs.mining)
+	local required = Mining.breakTime(
+		blockId,
+		heldId,
+		buffs.mining * Upgrades.miningMultiplier(held),
+		Upgrades.powerBonus(held)
+	)
 	if not required then
 		Net.get("Notify"):FireClient(player, { text = "تحتاج معولاً أقوى", color = { 230, 160, 80 } })
 		return
@@ -5479,6 +6611,11 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 	local block = Blocks.get(blockId)
 	local wall = World.bg(world, x, y)
 	local extraLogs = 0
+
+	-- محطة ذات حالة: انثر محتوياتها قبل إزالتها
+	if block.station and Services.Station then
+		Services.Station.onBlockRemoved(x, y)
+	end
 
 	if blockId == B.LOG then
 		extraLogs = fellTree(x, y) - 1
@@ -5503,6 +6640,11 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 		elseif blockId == B.GRASS_TUFT or blockId == B.FLOWER then
 			dropItem = if math.random() < 0.35 then "herb" else dropItem
 		end
+		-- صفة «موفّق»: فرصة مضاعفة الإسقاط
+		local fortune = Upgrades.fortune(held)
+		if fortune > 0 and math.random() < fortune then
+			count *= 2
+		end
 		Services.Player.giveItem(player, dropItem, count, x + 0.5, y + 0.5)
 	end
 
@@ -5518,7 +6660,8 @@ local function handlePlace(player: Player, x: number, y: number, layer: string, 
 	if y >= Config.BEDROCK_Y or y < Config.SKY_TOP then return end
 
 	local px, py = state.body.x, state.body.y
-	if Util.dist(px, py, x + 0.5, y + 0.5) > Config.REACH + 1.2 then return end
+	local reach = Config.REACH + Upgrades.reachBonus(Services.Player.heldItem(player)) + 1.2
+	if Util.dist(px, py, x + 0.5, y + 0.5) > reach then return end
 	if not consumeToken(player) then return end
 
 	local stack = state.slots[slotIndex]
@@ -5741,21 +6884,21 @@ return WorldService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="27">
+  <Item class="SoundService" referent="30">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="28">
+  <Item class="StarterPlayer" referent="31">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="29">
+    <Item class="StarterPlayerScripts" referent="32">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="30">
+      <Item class="LocalScript" referent="33">
         <Properties>
           <string name="Name">Client</string>
           <string name="Source"><![CDATA[--!strict
@@ -6019,6 +7162,13 @@ Net.get("Respawn").OnClientEvent:Connect(function(x: number, y: number)
 	Lighting.markDirty()
 end)
 
+Net.get("Station").OnClientEvent:Connect(function(payload)
+	Panels.openStation(payload)
+	if type(payload) == "table" and payload.open then
+		Sfx.play("ui")
+	end
+end)
+
 Net.get("Shop").OnClientEvent:Connect(function(payload)
 	Panels.openShop(payload)
 	if payload.open then
@@ -6116,7 +7266,7 @@ end)
 print("[TerraCraft] العميل جاهز")
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">ClientWorld</string>
             <string name="Source"><![CDATA[--!strict
@@ -6295,7 +7445,7 @@ return ClientWorld
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">Controller</string>
             <string name="Source"><![CDATA[--!strict
@@ -6318,6 +7468,7 @@ local Items = require(Shared.Items)
 local Mining = require(Shared.Mining)
 local Net = require(Shared.Net)
 local Physics = require(Shared.Physics)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 
@@ -6476,12 +7627,13 @@ local function updateMovement(dt: number)
 	if input.left then moveDir -= 1 end
 	if input.right then moveDir += 1 end
 
-	local speed = Config.WALK_SPEED * agg.speed
+	local armorSpeed = Upgrades.armorBonus(State.armor).speed
+	local speed = Config.WALK_SPEED * agg.speed * armorSpeed
 	local accel = if body.onGround then Config.WALK_ACCEL else Config.AIR_ACCEL
 	local inWater = body.inLiquid ~= 0
 
 	if inWater then
-		speed = Config.SWIM_SPEED * agg.speed
+		speed = Config.SWIM_SPEED * agg.speed * armorSpeed
 		accel *= 0.6
 	end
 
@@ -6577,14 +7729,15 @@ local function targetTile(): (number?, number?, boolean)
 	local tx, ty = math.floor(wx), math.floor(wy)
 	if not World.inBounds(tx, ty) then return nil, nil, false end
 	local body = State.body
-	local inRange = Util.dist(body.x, body.y, tx + 0.5, ty + 0.5) <= Config.REACH
+	local reach = Config.REACH + Upgrades.reachBonus(State.heldItem())
+	local inRange = Util.dist(body.x, body.y, tx + 0.5, ty + 0.5) <= reach
 	return tx, ty, inRange
 end
 
 local function currentMiningMultiplier(): number
 	local map = {}
 	for _, buff in State.buffs do map[buff.id] = buff.t end
-	return Buffs.aggregate(map).mining
+	return Buffs.aggregate(map).mining * Upgrades.miningMultiplier(State.heldItem())
 end
 
 local function tryPlace(tx: number, ty: number): boolean
@@ -6642,7 +7795,12 @@ local function tryMine(tx: number, ty: number, dt: number): boolean
 		if targetId == Blocks.ID.AIR or Blocks.isLiquid(targetId) then return false end
 	end
 
-	local required = Mining.breakTime(targetId, heldId, currentMiningMultiplier())
+	local required = Mining.breakTime(
+		targetId,
+		heldId,
+		currentMiningMultiplier(),
+		Upgrades.powerBonus(held)
+	)
 	if not required then
 		State.mining = nil
 		return false
@@ -6734,6 +7892,15 @@ local function updateActions(dt: number)
 	end
 
 	if input.secondary then
+		-- التفاعل مع محطة (فرن، طاولة عمل، سندان، طاولة سحر) له الأولوية
+		local block = Blocks.get(World.fg(ClientWorld.get(), tx, ty))
+		if block.station then
+			input.secondary = false
+			Net.get("Station"):FireServer("open", tx, ty)
+			fire("sfx", "ui")
+			return
+		end
+
 		local held = State.heldItem()
 		local item = if held then Items.get(held.id) else nil
 		if item and (item.cat == "consumable" or item.cat == "misc") then
@@ -6794,7 +7961,7 @@ return Controller
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">Fx</string>
             <string name="Source"><![CDATA[--!strict
@@ -7027,6 +8194,12 @@ function Fx.handle(payload: any)
 		Fx.pickup(payload.x, payload.y, payload.item, payload.count)
 	elseif kind == "swing" then
 		if payload.player ~= State.userId then return end
+	elseif kind == "upgrade" then
+		Fx.burst(payload.x, payload.y - 1, Color3.fromRGB(250, 205, 110), 22, 8, 0.7, -4)
+		Fx.text(payload.x, payload.y - 2, "تمّ التطوير!", Color3.fromRGB(250, 210, 110), 20)
+	elseif kind == "enchant" then
+		Fx.burst(payload.x, payload.y - 1, Color3.fromRGB(180, 150, 250), 26, 9, 0.8, -5)
+		Fx.text(payload.x, payload.y - 2, "سِحر!", Color3.fromRGB(190, 150, 250), 20)
 	elseif kind == "boss_charge" then
 		Renderer.shake(12, 0.3)
 		Fx.burst(payload.x, payload.y, Color3.fromRGB(220, 60, 70), 20, 12, 0.5, 0)
@@ -7056,7 +8229,7 @@ return Fx
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">Lighting</string>
             <string name="Source"><![CDATA[--!strict
@@ -7242,7 +8415,7 @@ return Lighting
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">Renderer</string>
             <string name="Source"><![CDATA[--!strict
@@ -8039,7 +9212,7 @@ return Renderer
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">Sfx</string>
             <string name="Source"><![CDATA[--!strict
@@ -8135,7 +9308,7 @@ return Sfx
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">Sprites</string>
             <string name="Source"><![CDATA[--!strict
@@ -8593,7 +9766,7 @@ return Sprites
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">State</string>
             <string name="Source"><![CDATA[--!strict
@@ -8670,11 +9843,11 @@ return State
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="39">
+        <Item class="Folder" referent="42">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="40">
+          <Item class="ModuleScript" referent="43">
             <Properties>
               <string name="Name">Hud</string>
               <string name="Source"><![CDATA[--!strict
@@ -8690,6 +9863,7 @@ local Buffs = require(Shared.Buffs)
 local Config = require(Shared.Config)
 local Items = require(Shared.Items)
 local Net = require(Shared.Net)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local WorldGen = require(Shared.WorldGen)
 
@@ -8709,7 +9883,7 @@ local coinLabel: TextLabel
 local buffRow: Frame
 local buffIcons: { Frame } = {}
 local buffSignature = ""
-local hotbarSlots: { { root: TextButton, swatch: Frame, count: TextLabel, key: TextLabel } } = {}
+local hotbarSlots: { { root: TextButton, swatch: Frame, count: TextLabel, key: TextLabel, glow: UIStroke } } = {}
 local hotbarName: TextLabel
 local bossFrame: Frame
 local bossBar: Theme.Bar
@@ -8824,7 +9998,7 @@ local function buildHotbar(parent: Instance)
 			ZIndex = 31,
 		}, box)
 		Theme.corner(button, 8)
-		Theme.stroke(button, Color3.fromRGB(10, 10, 14), 2)
+		local glow = Theme.stroke(button, Color3.fromRGB(10, 10, 14), 2)
 
 		local swatch = Theme.new("Frame", {
 			BackgroundColor3 = Color3.fromRGB(200, 200, 200),
@@ -8867,7 +10041,7 @@ local function buildHotbar(parent: Instance)
 			if onHotbarSelect then onHotbarSelect(i) end
 		end)
 
-		table.insert(hotbarSlots, { root = button, swatch = swatch, count = count, key = key })
+		table.insert(hotbarSlots, { root = button, swatch = swatch, count = count, key = key, glow = glow })
 	end
 end
 
@@ -9116,21 +10290,26 @@ function Hud.update(dt: number)
 			slot.swatch.Visible = true
 			slot.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
 			slot.count.Text = if stack.n > 1 then tostring(stack.n) else ""
+			-- إطار متوهج للأغراض المطوّرة أو المسحورة
+			if Upgrades.isModified(stack) then
+				slot.glow.Color = Upgrades.displayColor(stack)
+				slot.glow.Thickness = 2.5
+			else
+				slot.glow.Color = Color3.fromRGB(10, 10, 14)
+				slot.glow.Thickness = 2
+			end
 		else
 			slot.swatch.Visible = false
 			slot.count.Text = ""
+			slot.glow.Color = Color3.fromRGB(10, 10, 14)
+			slot.glow.Thickness = 2
 		end
 	end
 
 	local held = State.heldItem()
-	if held then
-		local item = Items.get(held.id)
-		if item then
-			hotbarName.Text = item.name
-			hotbarName.TextColor3 = Items.RARITY_COLORS[item.rarity] or Theme.colors.text
-		else
-			hotbarName.Text = held.id
-		end
+	if held and Items.get(held.id) then
+		hotbarName.Text = Upgrades.displayName(held)
+		hotbarName.TextColor3 = Upgrades.displayColor(held)
 	else
 		hotbarName.Text = ""
 	end
@@ -9216,13 +10395,20 @@ return Hud
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="41">
+          <Item class="ModuleScript" referent="44">
             <Properties>
               <string name="Name">Panels</string>
               <string name="Source"><![CDATA[--!strict
 --[[
-	Panels — نوافذ المخزون والتصنيع والمتجر، مع تلميحات العناصر.
-	التفاعل: نقرة لاختيار خانة ثم نقرة أخرى للتبديل (يعمل بالفأرة واللمس معاً).
+	Panels — نوافذ المخزون والمحطات والمتجر، مع تلميحات العناصر.
+
+	نافذة المحطة واحدة بتبويبات، ويتغيّر محتواها حسب ما تفاعلت معه:
+		تصنيع  — لكل المحطات (مع بحث)
+		صهر    — الفرن: مُدخل + وقود + ناتج + شريط تقدّم حيّ
+		تطوير  — السندان: رفع مستوى الأداة/الدرع (+1 حتى +5)
+		سحر    — طاولة السحر: منح صفة عشوائية قابلة لإعادة الرمي
+
+	التفاعل موحّد: نقرة لاختيار خانة ثم نقرة على الهدف. يعمل بالفأرة واللمس.
 ]]
 
 local GuiService = game:GetService("GuiService")
@@ -9235,6 +10421,8 @@ local Inventory = require(Shared.Inventory)
 local Items = require(Shared.Items)
 local Net = require(Shared.Net)
 local Recipes = require(Shared.Recipes)
+local Smelting = require(Shared.Smelting)
+local Upgrades = require(Shared.Upgrades)
 local World = require(Shared.World)
 
 local ClientWorld = require(script.Parent.Parent.ClientWorld)
@@ -9243,36 +10431,149 @@ local Theme = require(script.Parent.Theme)
 
 local Panels = {}
 
+local SLOT = 46
+local GAP = 5
+local STATION_RANGE = 7
+
+-- ===== المراجع =====
 local root: Frame
 local invPanel: Frame
-local craftPanel: Frame
+local stationPanel: Frame
 local shopPanel: Frame
 local tooltip: Frame
 local tooltipTitle: TextLabel
 local tooltipBody: TextLabel
 
-local slotButtons: { { button: TextButton, swatch: Frame, count: TextLabel } } = {}
-local armorButtons: { [string]: { button: TextButton, swatch: Frame } } = {}
+type SlotView = { button: TextButton, swatch: Frame, count: TextLabel, glow: UIStroke }
+
+local slotButtons: { SlotView } = {}
+local armorButtons: { [string]: SlotView } = {}
+
+local stationTitle: TextLabel
+local tabRow: Frame
+local tabButtons: { [string]: TextButton } = {}
+local contentFrames: { [string]: Frame } = {}
+
 local craftList: ScrollingFrame
 local craftRows: { Frame } = {}
-local stationLabel: TextLabel
+local craftSearch: TextBox
+local stationHint: TextLabel
+
+local furnaceSlots: { [string]: SlotView } = {}
+local furnaceProgress: Theme.Bar
+local furnaceBurn: Theme.Bar
+local furnaceHint: TextLabel
+
+local modTarget: { [string]: TextLabel } = {}
+local modCost: { [string]: TextLabel } = {}
+local modButton: { [string]: TextButton } = {}
+local modPreview: { [string]: TextLabel } = {}
+
 local shopList: ScrollingFrame
 local shopCoins: TextLabel
 
+-- ===== الحالة =====
 local selected: number? = nil
 local shopData: any = nil
-local craftRefresh = 0
+local stationData: any = nil
+local activeTab = "craft"
 local craftDirty = true
+local craftRefresh = 0
 local stationSignature = ""
+local searchText = ""
 
-local SLOT = 46
-local GAP = 5
+local TAB_NAMES = { craft = "تصنيع", smelt = "صهر", upgrade = "تطوير", enchant = "سحر" }
+local STATION_NAMES = {
+	workbench = "طاولة العمل",
+	furnace = "الفرن",
+	anvil = "السندان",
+	alchemy = "طاولة الخيمياء",
+	enchant = "طاولة السحر",
+}
+
+-- ===== أدوات مشتركة =====
+
+local function stackOf(data: any): Inventory.Stack?
+	if type(data) ~= "table" or type(data.id) ~= "string" then return nil end
+	local stack: Inventory.Stack = { id = data.id, n = data.n or 1 }
+	if type(data.lvl) == "number" then
+		stack.up = Upgrades.normalize({ lvl = data.lvl, aff = data.aff })
+	end
+	return stack
+end
+
+local function makeSlot(parent: Instance, position: UDim2, size: number?): SlotView
+	local edge = size or SLOT
+	local button = Theme.new("TextButton", {
+		BackgroundColor3 = Theme.colors.slot,
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Size = UDim2.fromOffset(edge, edge),
+		Position = position,
+		ZIndex = 32,
+	}, parent)
+	Theme.corner(button, 7)
+	local glow = Theme.stroke(button, Color3.fromRGB(10, 10, 14), 1.5)
+
+	local swatch = Theme.new("Frame", {
+		BackgroundColor3 = Color3.fromRGB(200, 200, 200),
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.45),
+		Size = UDim2.fromOffset(edge * 0.56, edge * 0.56),
+		Visible = false,
+		ZIndex = 33,
+	}, button)
+	Theme.corner(swatch, 5)
+
+	local count = Theme.new("TextLabel", {
+		BackgroundTransparency = 1,
+		Font = Theme.fontBold,
+		Text = "",
+		TextSize = 12,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextStrokeTransparency = 0.35,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -3, 1, -1),
+		Size = UDim2.fromOffset(38, 14),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ZIndex = 34,
+	}, button)
+
+	return { button = button, swatch = swatch, count = count, glow = glow }
+end
+
+local function paintSlot(view: SlotView, stack: Inventory.Stack?, highlighted: boolean?)
+	if stack then
+		local item = Items.get(stack.id)
+		view.swatch.Visible = true
+		view.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
+		view.count.Text = if stack.n > 1 then tostring(stack.n) else ""
+		if Upgrades.isModified(stack) then
+			-- إطار متوهج يميّز الغرض المطوّر أو المسحور
+			view.glow.Color = Upgrades.displayColor(stack)
+			view.glow.Thickness = 2.5
+		else
+			view.glow.Color = Color3.fromRGB(10, 10, 14)
+			view.glow.Thickness = 1.5
+		end
+	else
+		view.swatch.Visible = false
+		view.count.Text = ""
+		view.glow.Color = Color3.fromRGB(10, 10, 14)
+		view.glow.Thickness = 1.5
+	end
+	if highlighted ~= nil then
+		view.button.BackgroundColor3 = if highlighted then Theme.colors.slotActive else Theme.colors.slot
+	end
+end
 
 -- ===== التلميح =====
 
 local function buildTooltip(parent: Instance)
 	tooltip = Theme.panel(parent, "Tooltip")
-	tooltip.Size = UDim2.fromOffset(260, 120)
+	tooltip.Size = UDim2.fromOffset(280, 120)
 	tooltip.Visible = false
 	tooltip.ZIndex = 60
 	Theme.padding(tooltip, 10)
@@ -9290,43 +10591,72 @@ local function buildTooltip(parent: Instance)
 	tooltipBody.ZIndex = 61
 end
 
-local function itemDescription(item: Items.Item): string
+local function describe(stack: Inventory.Stack): string
+	local item = Items.get(stack.id)
+	if not item then return stack.id end
 	local lines = {}
+
 	if item.cat == "block" then table.insert(lines, "بلاطة قابلة للبناء") end
-	if item.damage then table.insert(lines, string.format("الضرر: %d", item.damage)) end
-	if item.pick and item.pick > 0 then table.insert(lines, string.format("قوة المعول: %d", item.pick)) end
-	if item.axe and item.axe > 0 then table.insert(lines, string.format("قوة الفأس: %d", item.axe)) end
-	if item.useTime then table.insert(lines, string.format("سرعة الاستخدام: %.2fث", item.useTime)) end
-	if item.knockback then table.insert(lines, string.format("الارتداد: %.1f", item.knockback)) end
-	if item.defense then table.insert(lines, string.format("الدفاع: %d", item.defense)) end
+
+	-- الأرقام المعروضة هي الفعلية بعد التطوير والصفة
+	if item.damage then table.insert(lines, string.format("الضرر: %d", Upgrades.damage(stack))) end
+	if item.pick and item.pick > 0 then
+		table.insert(lines, string.format("قوة المعول: %d", item.pick + Upgrades.powerBonus(stack)))
+	end
+	if item.axe and item.axe > 0 then
+		table.insert(lines, string.format("قوة الفأس: %d", item.axe + Upgrades.powerBonus(stack)))
+	end
+	if item.useTime then table.insert(lines, string.format("زمن الاستخدام: %.2fث", Upgrades.useTime(stack))) end
+	if item.defense then table.insert(lines, string.format("الدفاع: %d", Upgrades.defense(stack))) end
 	if item.setBonus then table.insert(lines, "طقم كامل: +6 دفاع") end
 	if item.heal then table.insert(lines, string.format("يستعيد %d حياة", item.heal)) end
 	if item.restoreMana then table.insert(lines, string.format("يستعيد %d مانا", item.restoreMana)) end
 	if item.food then table.insert(lines, string.format("يشبع %d", item.food)) end
 	if item.mana then table.insert(lines, string.format("كلفة المانا: %d", item.mana)) end
 	if item.ranged then table.insert(lines, "يحتاج ذخيرة: سهام") end
-	if item.buff then table.insert(lines, "يمنح تأثيراً مؤقتاً") end
+
+	local affix = Upgrades.affixOf(stack)
+	if affix then
+		table.insert(lines, "✦ " .. affix.name .. ": " .. affix.desc)
+	end
+	local level = Upgrades.levelOf(stack)
+	if level > 0 then
+		table.insert(lines, string.format("مستوى التطوير: +%d / +%d", level, Upgrades.MAX_LEVEL))
+	end
+	if Upgrades.canModify(stack.id) and level == 0 and not affix then
+		table.insert(lines, "قابل للتطوير على السندان وللسحر على طاولة السحر")
+	end
+
+	local smelt = Smelting.recipeFor(stack.id)
+	if smelt then
+		table.insert(lines, string.format("يُصهر إلى: %s (%.0fث)", Items.name(smelt.out), smelt.time))
+	end
+	local fuel = Smelting.fuelValue(stack.id)
+	if fuel > 0 then
+		table.insert(lines, string.format("وقود: %.0f ثانية", fuel))
+	end
+
 	if item.desc then table.insert(lines, item.desc) end
 	table.insert(lines, string.format("القيمة: %d عملة", item.value))
 	return table.concat(lines, "\n")
 end
 
-local function showTooltip(itemId: string?)
-	if not itemId then
-		tooltip.Visible = false
-		return
-	end
-	local item = Items.get(itemId)
-	if not item then
+local function showTooltip(stack: Inventory.Stack?)
+	if not stack or not Items.get(stack.id) then
 		tooltip.Visible = false
 		return
 	end
 	tooltip.Visible = true
-	tooltipTitle.Text = item.name
-	tooltipTitle.TextColor3 = Items.RARITY_COLORS[item.rarity] or Theme.colors.text
-	tooltipBody.Text = itemDescription(item)
+	tooltipTitle.Text = Upgrades.displayName(stack)
+	tooltipTitle.TextColor3 = Upgrades.displayColor(stack)
+	tooltipBody.Text = describe(stack)
 	local lineCount = select(2, string.gsub(tooltipBody.Text, "\n", "")) + 1
-	tooltip.Size = UDim2.fromOffset(260, 40 + lineCount * 16)
+	tooltip.Size = UDim2.fromOffset(280, 40 + lineCount * 16)
+end
+
+local function hookTooltip(button: GuiButton, getter: () -> Inventory.Stack?)
+	button.MouseEnter:Connect(function() showTooltip(getter()) end)
+	button.MouseLeave:Connect(function() showTooltip(nil) end)
 end
 
 -- ===== المخزون =====
@@ -9340,7 +10670,8 @@ local function slotClicked(index: number, alternate: boolean)
 			if item and item.cat == "armor" then
 				Net.get("InvAction"):FireServer("equip", index)
 			else
-				Net.get("InvAction"):FireServer("drop", index, if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then "all" else 1)
+				Net.get("InvAction"):FireServer("drop", index,
+					if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then "all" else 1)
 			end
 		end
 		selected = nil
@@ -9369,7 +10700,6 @@ local function buildInventory(parent: Instance)
 	local title = Theme.label(invPanel, "المخزون", 18, Theme.colors.text)
 	title.Size = UDim2.new(1, 0, 0, 22)
 	title.Font = Theme.fontBold
-	title.TextXAlignment = Enum.TextXAlignment.Right
 
 	local sortButton = Theme.button(invPanel, "ترتيب", UDim2.fromOffset(74, 24), UDim2.fromOffset(0, 0))
 	sortButton.MouseButton1Click:Connect(function()
@@ -9385,46 +10715,17 @@ local function buildInventory(parent: Instance)
 	}, invPanel)
 
 	local slotNames = { head = "الرأس", chest = "الصدر", feet = "القدم" }
-	local order = { "head", "chest", "feet" }
-	for i, slotName in order do
+	for i, slotName in { "head", "chest", "feet" } do
 		local label = Theme.label(armorBox, slotNames[slotName], 12, Theme.colors.textDim)
 		label.Position = UDim2.fromOffset(0, (i - 1) * (SLOT + 22))
 		label.Size = UDim2.fromOffset(120, 16)
-		label.TextXAlignment = Enum.TextXAlignment.Right
 
-		local button = Theme.new("TextButton", {
-			BackgroundColor3 = Theme.colors.slot,
-			BorderSizePixel = 0,
-			Text = "",
-			AutoButtonColor = false,
-			Size = UDim2.fromOffset(SLOT, SLOT),
-			Position = UDim2.fromOffset(120 - SLOT, (i - 1) * (SLOT + 22) + 18),
-			ZIndex = 32,
-		}, armorBox)
-		Theme.corner(button, 7)
-		Theme.stroke(button, Color3.fromRGB(10, 10, 14), 1.5)
-
-		local swatch = Theme.new("Frame", {
-			BackgroundColor3 = Color3.fromRGB(200, 200, 200),
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(26, 26),
-			Visible = false,
-			ZIndex = 33,
-		}, button)
-		Theme.corner(swatch, 5)
-
-		button.MouseButton1Click:Connect(function()
+		local view = makeSlot(armorBox, UDim2.fromOffset(120 - SLOT, (i - 1) * (SLOT + 22) + 18))
+		view.button.MouseButton1Click:Connect(function()
 			Net.get("InvAction"):FireServer("unequip", slotName)
 		end)
-		button.MouseEnter:Connect(function()
-			local stack = State.armor[slotName]
-			showTooltip(if stack then stack.id else nil)
-		end)
-		button.MouseLeave:Connect(function() showTooltip(nil) end)
-
-		armorButtons[slotName] = { button = button, swatch = swatch }
+		hookTooltip(view.button, function() return State.armor[slotName] end)
+		armorButtons[slotName] = view
 	end
 
 	-- شبكة الخانات
@@ -9438,65 +10739,23 @@ local function buildInventory(parent: Instance)
 	for i = 1, Config.INV_SLOTS do
 		local col = (i - 1) % Config.HOTBAR
 		local row = (i - 1) // Config.HOTBAR
-
-		local button = Theme.new("TextButton", {
-			BackgroundColor3 = Theme.colors.slot,
-			BorderSizePixel = 0,
-			Text = "",
-			AutoButtonColor = false,
-			Size = UDim2.fromOffset(SLOT, SLOT),
-			Position = UDim2.fromOffset(col * (SLOT + GAP), row * (SLOT + GAP)),
-			ZIndex = 32,
-		}, grid)
-		Theme.corner(button, 7)
-		Theme.stroke(button, Color3.fromRGB(10, 10, 14), 1.5)
-
-		local swatch = Theme.new("Frame", {
-			BackgroundColor3 = Color3.fromRGB(200, 200, 200),
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.45),
-			Size = UDim2.fromOffset(26, 26),
-			Visible = false,
-			ZIndex = 33,
-		}, button)
-		Theme.corner(swatch, 5)
-
-		local count = Theme.new("TextLabel", {
-			BackgroundTransparency = 1,
-			Font = Theme.fontBold,
-			Text = "",
-			TextSize = 12,
-			TextColor3 = Color3.fromRGB(255, 255, 255),
-			TextStrokeTransparency = 0.35,
-			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -3, 1, -1),
-			Size = UDim2.fromOffset(38, 14),
-			TextXAlignment = Enum.TextXAlignment.Right,
-			ZIndex = 34,
-		}, button)
-
-		button.MouseButton1Click:Connect(function() slotClicked(i, false) end)
-		button.MouseButton2Click:Connect(function() slotClicked(i, true) end)
-		button.MouseEnter:Connect(function()
-			local stack = State.slots[i]
-			showTooltip(if stack then stack.id else nil)
-		end)
-		button.MouseLeave:Connect(function() showTooltip(nil) end)
-
-		table.insert(slotButtons, { button = button, swatch = swatch, count = count })
+		local view = makeSlot(grid, UDim2.fromOffset(col * (SLOT + GAP), row * (SLOT + GAP)))
+		view.button.MouseButton1Click:Connect(function() slotClicked(i, false) end)
+		view.button.MouseButton2Click:Connect(function() slotClicked(i, true) end)
+		hookTooltip(view.button, function() return State.slots[i] end)
+		table.insert(slotButtons, view)
 	end
 end
 
--- ===== التصنيع =====
+-- ===== المحطات القريبة =====
 
 local function stationsNear(): { [string]: boolean }
 	local found: { [string]: boolean } = {}
 	if not ClientWorld.isReady() then return found end
 	local world = ClientWorld.get()
 	local cx, cy = math.floor(State.body.x), math.floor(State.body.y)
-	for ty = cy - 7, cy + 7 do
-		for tx = cx - 7, cx + 7 do
+	for ty = cy - STATION_RANGE, cy + STATION_RANGE do
+		for tx = cx - STATION_RANGE, cx + STATION_RANGE do
 			local block = Blocks.get(World.fg(world, tx, ty))
 			if block.station then found[block.station] = true end
 		end
@@ -9504,178 +10763,448 @@ local function stationsNear(): { [string]: boolean }
 	return found
 end
 
-local STATION_NAMES = {
-	workbench = "طاولة عمل",
-	furnace = "فرن",
-	anvil = "سندان",
-	alchemy = "طاولة خيمياء",
-}
-
-local function buildCrafting(parent: Instance)
-	craftPanel = Theme.panel(parent, "Crafting")
-	craftPanel.Size = UDim2.fromOffset(380, 460)
-	craftPanel.Position = UDim2.new(1, -410, 0, 90)
-	Theme.padding(craftPanel, 12)
-
-	local title = Theme.label(craftPanel, "التصنيع", 18, Theme.colors.text)
-	title.Size = UDim2.new(1, 0, 0, 22)
-	title.Font = Theme.fontBold
-
-	stationLabel = Theme.label(craftPanel, "", 12, Theme.colors.textDim)
-	stationLabel.Position = UDim2.fromOffset(0, 24)
-	stationLabel.Size = UDim2.new(1, 0, 0, 18)
-
-	craftList = Theme.new("ScrollingFrame", {
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 46),
-		Size = UDim2.new(1, 0, 1, -46),
-		CanvasSize = UDim2.fromOffset(0, 0),
-		ScrollBarThickness = 6,
-		ScrollBarImageColor3 = Theme.colors.slotHover,
-		ZIndex = 31,
-	}, craftPanel)
-
-	local layout = Instance.new("UIListLayout")
-	layout.Padding = UDim.new(0, 5)
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Parent = craftList
-end
+-- ===== تبويب التصنيع =====
 
 local function refreshCrafting()
 	for _, row in craftRows do row:Destroy() end
 	table.clear(craftRows)
 
 	local stations = stationsNear()
-	local names = {}
 	local keys = {}
 	for station in stations do table.insert(keys, station) end
 	table.sort(keys)
 	stationSignature = table.concat(keys, ",")
 
-	for station in stations do
+	local names = {}
+	for _, station in keys do
 		table.insert(names, STATION_NAMES[station] or station)
 	end
-	stationLabel.Text = if #names > 0 then "المحطات القريبة: " .. table.concat(names, "، ") else "لا توجد محطات قريبة (باليد فقط)"
+	stationHint.Text = if #names > 0
+		then "المحطات القريبة: " .. table.concat(names, "، ")
+		else "لا توجد محطات قريبة — الوصفات اليدوية فقط"
 
+	local query = string.lower(searchText)
 	local available = Recipes.available(stations)
 	local order = 0
 	local totalHeight = 0
 
 	for _, recipe in available do
-		local canCraft = Inventory.canCraft(State.slots, recipe)
 		local outItem = Items.get(recipe.out.id)
 		if outItem then
-			order += 1
-			local row = Theme.new("Frame", {
-				BackgroundColor3 = Theme.colors.panelLight,
-				BackgroundTransparency = if canCraft then 0.1 else 0.55,
-				BorderSizePixel = 0,
-				Size = UDim2.new(1, -8, 0, 54),
-				LayoutOrder = if canCraft then order else order + 1000,
-				ZIndex = 32,
-			}, craftList)
-			Theme.corner(row, 7)
+			local matches = query == "" or string.find(string.lower(outItem.name), query, 1, true) ~= nil
+				or string.find(recipe.out.id, query, 1, true) ~= nil
+			if matches then
+				local canCraft = Inventory.canCraft(State.slots, recipe)
+				order += 1
+				local row = Theme.new("Frame", {
+					BackgroundColor3 = Theme.colors.panelLight,
+					BackgroundTransparency = if canCraft then 0.1 else 0.55,
+					BorderSizePixel = 0,
+					Size = UDim2.new(1, -8, 0, 54),
+					LayoutOrder = if canCraft then order else order + 1000,
+					ZIndex = 32,
+				}, craftList)
+				Theme.corner(row, 7)
 
-			local swatch = Theme.new("Frame", {
-				BackgroundColor3 = outItem.color,
-				BorderSizePixel = 0,
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -8, 0.5, 0),
-				Size = UDim2.fromOffset(30, 30),
-				ZIndex = 33,
-			}, row)
-			Theme.corner(swatch, 5)
+				local swatch = Theme.new("Frame", {
+					BackgroundColor3 = outItem.color,
+					BorderSizePixel = 0,
+					AnchorPoint = Vector2.new(1, 0.5),
+					Position = UDim2.new(1, -8, 0.5, 0),
+					Size = UDim2.fromOffset(30, 30),
+					ZIndex = 33,
+				}, row)
+				Theme.corner(swatch, 5)
 
-			local name = Theme.label(row, string.format("%s ×%d", outItem.name, recipe.out.n), 14,
-				Items.RARITY_COLORS[outItem.rarity] or Theme.colors.text)
-			name.Position = UDim2.fromOffset(0, 6)
-			name.Size = UDim2.new(1, -48, 0, 18)
-			name.Font = Theme.fontBold
+				local name = Theme.label(row, string.format("%s ×%d", outItem.name, recipe.out.n), 14,
+					Items.RARITY_COLORS[outItem.rarity] or Theme.colors.text)
+				name.Position = UDim2.fromOffset(0, 6)
+				name.Size = UDim2.new(1, -48, 0, 18)
+				name.Font = Theme.fontBold
 
-			local parts = {}
-			for _, ingredient in recipe.ins do
-				local have = Inventory.count(State.slots, ingredient.id)
-				table.insert(parts, string.format("%s %d/%d", Items.name(ingredient.id), have, ingredient.n))
+				local parts = {}
+				for _, ingredient in recipe.ins do
+					local have = Inventory.count(State.slots, ingredient.id)
+					table.insert(parts, string.format("%s %d/%d", Items.name(ingredient.id), have, ingredient.n))
+				end
+				local ingredients = Theme.label(row, table.concat(parts, " · "), 11,
+					if canCraft then Theme.colors.good else Theme.colors.textDim)
+				ingredients.Position = UDim2.fromOffset(0, 26)
+				ingredients.Size = UDim2.new(1, -48, 0, 24)
+				ingredients.TextWrapped = true
+
+				local button = Theme.new("TextButton", {
+					BackgroundTransparency = 1,
+					Text = "",
+					Size = UDim2.fromScale(1, 1),
+					ZIndex = 34,
+				}, row)
+				button.MouseButton1Click:Connect(function()
+					Net.get("Craft"):FireServer(recipe.key, 1)
+				end)
+				button.MouseButton2Click:Connect(function()
+					Net.get("Craft"):FireServer(recipe.key, 10)
+				end)
+				hookTooltip(button, function() return { id = recipe.out.id, n = recipe.out.n } end)
+
+				table.insert(craftRows, row)
+				totalHeight += 59
 			end
-			local ingredients = Theme.label(row, table.concat(parts, " · "), 11,
-				if canCraft then Theme.colors.good else Theme.colors.textDim)
-			ingredients.Position = UDim2.fromOffset(0, 26)
-			ingredients.Size = UDim2.new(1, -48, 0, 24)
-			ingredients.TextWrapped = true
-
-			local button = Theme.new("TextButton", {
-				BackgroundTransparency = 1,
-				Text = "",
-				Size = UDim2.fromScale(1, 1),
-				ZIndex = 34,
-			}, row)
-			button.MouseButton1Click:Connect(function()
-				Net.get("Craft"):FireServer(recipe.key, 1)
-			end)
-			button.MouseButton2Click:Connect(function()
-				Net.get("Craft"):FireServer(recipe.key, 10)
-			end)
-			button.MouseEnter:Connect(function() showTooltip(recipe.out.id) end)
-			button.MouseLeave:Connect(function() showTooltip(nil) end)
-
-			table.insert(craftRows, row)
-			totalHeight += 59
 		end
 	end
 
 	craftList.CanvasSize = UDim2.fromOffset(0, totalHeight)
 end
 
--- ===== المتجر =====
+local function buildCraftTab(parent: Instance): Frame
+	local frame = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = true,
+		ZIndex = 31,
+	}, parent)
 
-local function buildShop(parent: Instance)
-	shopPanel = Theme.panel(parent, "Shop")
-	shopPanel.Size = UDim2.fromOffset(360, 420)
-	shopPanel.Position = UDim2.new(0.5, -180, 0.5, -210)
-	shopPanel.Visible = false
-	Theme.padding(shopPanel, 12)
-
-	local title = Theme.label(shopPanel, "متجر التاجر", 18, Theme.colors.text)
-	title.Size = UDim2.new(1, 0, 0, 22)
-	title.Font = Theme.fontBold
-
-	shopCoins = Theme.label(shopPanel, "", 13, Theme.colors.gold)
-	shopCoins.Position = UDim2.fromOffset(0, 24)
-	shopCoins.Size = UDim2.new(1, 0, 0, 18)
-
-	local closeButton = Theme.button(shopPanel, "إغلاق", UDim2.fromOffset(70, 24), UDim2.fromOffset(0, 0))
-	closeButton.MouseButton1Click:Connect(function()
-		shopPanel.Visible = false
-		State.shopOpen = false
+	craftSearch = Theme.new("TextBox", {
+		BackgroundColor3 = Theme.colors.slot,
+		BorderSizePixel = 0,
+		Font = Theme.font,
+		PlaceholderText = "ابحث عن وصفة…",
+		Text = "",
+		TextSize = 13,
+		TextColor3 = Theme.colors.text,
+		PlaceholderColor3 = Theme.colors.textDim,
+		ClearTextOnFocus = false,
+		Size = UDim2.new(1, 0, 0, 26),
+		ZIndex = 32,
+	}, frame)
+	Theme.corner(craftSearch, 6)
+	craftSearch:GetPropertyChangedSignal("Text"):Connect(function()
+		searchText = craftSearch.Text
+		craftDirty = true
 	end)
 
-	shopList = Theme.new("ScrollingFrame", {
+	stationHint = Theme.label(frame, "", 12, Theme.colors.textDim)
+	stationHint.Position = UDim2.fromOffset(0, 30)
+	stationHint.Size = UDim2.new(1, 0, 0, 18)
+
+	craftList = Theme.new("ScrollingFrame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(0, 46),
-		Size = UDim2.new(1, 0, 1, -84),
+		Position = UDim2.fromOffset(0, 52),
+		Size = UDim2.new(1, 0, 1, -52),
+		CanvasSize = UDim2.fromOffset(0, 0),
+		ScrollBarThickness = 6,
+		ScrollBarImageColor3 = Theme.colors.slotHover,
+		ZIndex = 31,
+	}, frame)
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 5)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = craftList
+
+	return frame
+end
+
+-- ===== تبويب الفرن =====
+
+local function furnaceAction(slotName: string)
+	if not stationData then return end
+	local x, y = stationData.x, stationData.y
+	if slotName ~= "output" and selected then
+		Net.get("Station"):FireServer("give", x, y, selected, slotName)
+		selected = nil
+	else
+		Net.get("Station"):FireServer("take", x, y, slotName)
+	end
+end
+
+local function buildSmeltTab(parent: Instance): Frame
+	local frame = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		ZIndex = 31,
+	}, parent)
+
+	local big = 58
+	local labels = { input = "المادة", fuel = "الوقود", output = "الناتج" }
+	local positions = {
+		input = UDim2.fromOffset(0, 22),
+		fuel = UDim2.fromOffset(0, 22 + big + 34),
+		output = UDim2.new(1, -big, 0, 22 + (big + 34) / 2),
+	}
+
+	for _, slotName in { "input", "fuel", "output" } do
+		local caption = Theme.label(frame, labels[slotName], 12, Theme.colors.textDim)
+		caption.Position = positions[slotName] - UDim2.fromOffset(0, 18)
+		caption.Size = UDim2.fromOffset(big, 16)
+		caption.TextXAlignment = Enum.TextXAlignment.Center
+
+		local view = makeSlot(frame, positions[slotName], big)
+		view.button.MouseButton1Click:Connect(function() furnaceAction(slotName) end)
+		hookTooltip(view.button, function()
+			return if stationData then stackOf(stationData[slotName]) else nil
+		end)
+		furnaceSlots[slotName] = view
+	end
+
+	furnaceProgress = Theme.bar(frame, Color3.fromRGB(60, 44, 26), Color3.fromRGB(240, 170, 70), 150, 18)
+	furnaceProgress.root.Position = UDim2.fromOffset(big + 16, 22 + big / 2 - 9)
+
+	furnaceBurn = Theme.bar(frame, Color3.fromRGB(52, 30, 24), Color3.fromRGB(230, 96, 48), 150, 12)
+	furnaceBurn.root.Position = UDim2.fromOffset(big + 16, 22 + big / 2 + 16)
+
+	furnaceHint = Theme.label(frame, "", 12, Theme.colors.textDim)
+	furnaceHint.Position = UDim2.fromOffset(0, 22 + (big + 34) + big + 14)
+	furnaceHint.Size = UDim2.new(1, 0, 0, 54)
+	furnaceHint.TextWrapped = true
+	furnaceHint.TextYAlignment = Enum.TextYAlignment.Top
+
+	local reference = Theme.new("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 22 + (big + 34) + big + 72),
+		Size = UDim2.new(1, 0, 1, -(22 + (big + 34) + big + 72)),
 		CanvasSize = UDim2.fromOffset(0, 0),
 		ScrollBarThickness = 6,
 		ZIndex = 31,
-	}, shopPanel)
+	}, frame)
 	local layout = Instance.new("UIListLayout")
-	layout.Padding = UDim.new(0, 4)
-	layout.Parent = shopList
+	layout.Padding = UDim.new(0, 3)
+	layout.Parent = reference
 
-	local sellButton = Theme.button(shopPanel, "بيع العنصر المحدد", UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 1, -30))
-	sellButton.MouseButton1Click:Connect(function()
-		local index = selected
-		if not index then
-			return
-		end
-		local stack = State.slots[index]
-		if stack then
-			Net.get("Shop"):FireServer("sell", stack.id, stack.n)
-			selected = nil
-		end
-	end)
+	local height = 0
+	for _, entry in Smelting.list() do
+		local row = Theme.label(reference, string.format("%s ← %s ×%d (%.0fث)",
+			Items.name(entry.out), Items.name(entry.input), entry.n, entry.time), 11, Theme.colors.textDim)
+		row.Size = UDim2.new(1, -8, 0, 16)
+		height += 19
+	end
+	reference.CanvasSize = UDim2.fromOffset(0, height)
+
+	return frame
 end
+
+-- ===== تبويبا التطوير والسحر =====
+
+local function buildModTab(parent: Instance, kind: string): Frame
+	local frame = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		ZIndex = 31,
+	}, parent)
+
+	local intro = Theme.label(frame,
+		if kind == "upgrade"
+			then "اختر أداة أو درعاً من المخزون، ثم طوّره. النجاح مضمون دائماً."
+			else "اختر أداة أو درعاً، ثم امنحه صفة سحرية. يمكنك إعادة الرمي للحصول على صفة أخرى.",
+		12, Theme.colors.textDim)
+	intro.Position = UDim2.fromOffset(0, 0)
+	intro.Size = UDim2.new(1, 0, 0, 34)
+	intro.TextWrapped = true
+
+	modTarget[kind] = Theme.label(frame, "لم تختر عنصراً", 16, Theme.colors.text)
+	modTarget[kind].Position = UDim2.fromOffset(0, 42)
+	modTarget[kind].Size = UDim2.new(1, 0, 0, 22)
+	modTarget[kind].Font = Theme.fontBold
+
+	modPreview[kind] = Theme.label(frame, "", 12, Theme.colors.textDim)
+	modPreview[kind].Position = UDim2.fromOffset(0, 66)
+	modPreview[kind].Size = UDim2.new(1, 0, 0, 50)
+	modPreview[kind].TextWrapped = true
+	modPreview[kind].TextYAlignment = Enum.TextYAlignment.Top
+
+	modCost[kind] = Theme.label(frame, "", 13, Theme.colors.gold)
+	modCost[kind].Position = UDim2.fromOffset(0, 120)
+	modCost[kind].Size = UDim2.new(1, 0, 0, 40)
+	modCost[kind].TextWrapped = true
+	modCost[kind].TextYAlignment = Enum.TextYAlignment.Top
+
+	modButton[kind] = Theme.button(frame,
+		if kind == "upgrade" then "طوّر" else "اسحر",
+		UDim2.new(1, 0, 0, 34), UDim2.fromOffset(0, 166))
+	modButton[kind].TextSize = 16
+	modButton[kind].MouseButton1Click:Connect(function()
+		if not stationData or not selected then return end
+		Net.get("Station"):FireServer(kind, stationData.x, stationData.y, selected)
+	end)
+
+	-- مرجع الصفات المتاحة
+	local pool = if kind == "enchant" then "الصفات الممكنة:" else "كل مستوى: +12% للأرقام، +4 قوة أداة، −3% زمن استخدام."
+	local poolLabel = Theme.label(frame, pool, 12, Theme.colors.textDim)
+	poolLabel.Position = UDim2.fromOffset(0, 210)
+	poolLabel.Size = UDim2.new(1, 0, 0, 18)
+
+	if kind == "enchant" then
+		local list = Theme.new("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(0, 230),
+			Size = UDim2.new(1, 0, 1, -230),
+			CanvasSize = UDim2.fromOffset(0, 0),
+			ScrollBarThickness = 6,
+			ZIndex = 31,
+		}, frame)
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 3)
+		layout.Parent = list
+
+		local height = 0
+		local groupNames = { weapon = "الأسلحة", tool = "الأدوات", armor = "الدروع" }
+		for _, group in { "weapon", "tool", "armor" } do
+			local header = Theme.label(list, groupNames[group], 12, Theme.colors.text)
+			header.Size = UDim2.new(1, -8, 0, 18)
+			header.Font = Theme.fontBold
+			height += 21
+			for _, affix in Upgrades.pools[group] do
+				local row = Theme.label(list, "✦ " .. affix.name .. " — " .. affix.desc, 11, affix.color)
+				row.Size = UDim2.new(1, -8, 0, 16)
+				height += 19
+			end
+		end
+		list.CanvasSize = UDim2.fromOffset(0, height)
+	end
+
+	return frame
+end
+
+local function refreshModTab(kind: string)
+	local targetLabel = modTarget[kind]
+	local previewLabel = modPreview[kind]
+	local costLabel = modCost[kind]
+	local button = modButton[kind]
+	if not targetLabel then return end
+
+	local stack = if selected then State.slots[selected] else nil
+
+	if not stack then
+		targetLabel.Text = "لم تختر عنصراً"
+		targetLabel.TextColor3 = Theme.colors.textDim
+		previewLabel.Text = "انقر على أداة أو درع في المخزون لاختياره."
+		costLabel.Text = ""
+		button.AutoButtonColor = false
+		button.BackgroundColor3 = Theme.colors.slot
+		return
+	end
+
+	if not Upgrades.canModify(stack.id) then
+		targetLabel.Text = Upgrades.displayName(stack)
+		targetLabel.TextColor3 = Theme.colors.bad
+		previewLabel.Text = "هذا العنصر غير قابل للتطوير أو السحر — الأدوات والأسلحة والدروع فقط."
+		costLabel.Text = ""
+		button.AutoButtonColor = false
+		button.BackgroundColor3 = Theme.colors.slot
+		return
+	end
+
+	targetLabel.Text = Upgrades.displayName(stack)
+	targetLabel.TextColor3 = Upgrades.displayColor(stack)
+
+	local level = Upgrades.levelOf(stack)
+	local affix = Upgrades.affixOf(stack)
+	local lines = {}
+	table.insert(lines, string.format("المستوى الحالي: +%d / +%d", level, Upgrades.MAX_LEVEL))
+	table.insert(lines, if affix then "الصفة الحالية: " .. affix.name .. " — " .. affix.desc else "بلا صفة سحرية")
+	previewLabel.Text = table.concat(lines, "\n")
+
+	local cost = if kind == "upgrade"
+		then Upgrades.upgradeCost(stack.id, level)
+		else Upgrades.enchantCost(stack.id)
+
+	if not cost then
+		costLabel.Text = "بلغ هذا العنصر أقصى تطوير."
+		costLabel.TextColor3 = Theme.colors.textDim
+		button.AutoButtonColor = false
+		button.BackgroundColor3 = Theme.colors.slot
+		return
+	end
+
+	local haveMaterial = Inventory.count(State.slots, cost.material)
+	local haveCoins = Inventory.count(State.slots, "coin")
+	local affordable = haveMaterial >= cost.amount and haveCoins >= cost.coins
+
+	costLabel.Text = string.format("الكلفة: %s %d/%d · عملات %d/%d",
+		Items.name(cost.material), haveMaterial, cost.amount, haveCoins, cost.coins)
+	costLabel.TextColor3 = if affordable then Theme.colors.good else Theme.colors.bad
+	button.AutoButtonColor = affordable
+	button.BackgroundColor3 = if affordable then Theme.colors.panelLight else Theme.colors.slot
+end
+
+-- ===== نافذة المحطة =====
+
+local function setTab(tab: string)
+	activeTab = tab
+	for name, frame in contentFrames do
+		frame.Visible = name == tab
+	end
+	for name, button in tabButtons do
+		button.BackgroundColor3 = if name == tab then Theme.colors.slotActive else Theme.colors.panelLight
+	end
+	if tab == "craft" then craftDirty = true end
+end
+
+local function setAvailableTabs(tabs: { string })
+	local x = 0
+	local present: { [string]: boolean } = {}
+	for _, tab in tabs do present[tab] = true end
+
+	for name, button in tabButtons do
+		button.Visible = present[name] == true
+	end
+	for _, tab in tabs do
+		local button = tabButtons[tab]
+		if button then
+			button.Position = UDim2.fromOffset(x, 0)
+			x += 84
+		end
+	end
+
+	if not present[activeTab] then
+		setTab(tabs[1] or "craft")
+	else
+		setTab(activeTab)
+	end
+end
+
+local function buildStation(parent: Instance)
+	stationPanel = Theme.panel(parent, "Station")
+	stationPanel.Size = UDim2.fromOffset(400, 500)
+	stationPanel.Position = UDim2.new(1, -430, 0, 90)
+	Theme.padding(stationPanel, 12)
+
+	stationTitle = Theme.label(stationPanel, "التصنيع", 18, Theme.colors.text)
+	stationTitle.Size = UDim2.new(1, 0, 0, 22)
+	stationTitle.Font = Theme.fontBold
+
+	tabRow = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 26),
+		Size = UDim2.new(1, 0, 0, 28),
+		ZIndex = 31,
+	}, stationPanel)
+
+	for _, tab in { "craft", "smelt", "upgrade", "enchant" } do
+		local button = Theme.button(tabRow, TAB_NAMES[tab], UDim2.fromOffset(78, 26), UDim2.fromOffset(0, 0))
+		button.Visible = false
+		button.MouseButton1Click:Connect(function() setTab(tab) end)
+		tabButtons[tab] = button
+	end
+
+	local content = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 60),
+		Size = UDim2.new(1, 0, 1, -60),
+		ZIndex = 31,
+	}, stationPanel)
+
+	contentFrames.craft = buildCraftTab(content)
+	contentFrames.smelt = buildSmeltTab(content)
+	contentFrames.upgrade = buildModTab(content, "upgrade")
+	contentFrames.enchant = buildModTab(content, "enchant")
+end
+
+-- ===== المتجر =====
 
 local function refreshShop()
 	if not shopData then return end
@@ -9726,6 +11255,51 @@ local function refreshShop()
 	shopList.CanvasSize = UDim2.fromOffset(0, height)
 end
 
+local function buildShop(parent: Instance)
+	shopPanel = Theme.panel(parent, "Shop")
+	shopPanel.Size = UDim2.fromOffset(360, 420)
+	shopPanel.Position = UDim2.new(0.5, -180, 0.5, -210)
+	shopPanel.Visible = false
+	Theme.padding(shopPanel, 12)
+
+	local title = Theme.label(shopPanel, "متجر التاجر", 18, Theme.colors.text)
+	title.Size = UDim2.new(1, 0, 0, 22)
+	title.Font = Theme.fontBold
+
+	shopCoins = Theme.label(shopPanel, "", 13, Theme.colors.gold)
+	shopCoins.Position = UDim2.fromOffset(0, 24)
+	shopCoins.Size = UDim2.new(1, 0, 0, 18)
+
+	local closeButton = Theme.button(shopPanel, "إغلاق", UDim2.fromOffset(70, 24), UDim2.fromOffset(0, 0))
+	closeButton.MouseButton1Click:Connect(function()
+		shopPanel.Visible = false
+		State.shopOpen = false
+	end)
+
+	shopList = Theme.new("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 46),
+		Size = UDim2.new(1, 0, 1, -84),
+		CanvasSize = UDim2.fromOffset(0, 0),
+		ScrollBarThickness = 6,
+		ZIndex = 31,
+	}, shopPanel)
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = shopList
+
+	local sellButton = Theme.button(shopPanel, "بيع العنصر المحدد", UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 1, -30))
+	sellButton.MouseButton1Click:Connect(function()
+		if not selected then return end
+		local stack = State.slots[selected]
+		if stack then
+			Net.get("Shop"):FireServer("sell", stack.id, stack.n)
+			selected = nil
+		end
+	end)
+end
+
 -- ===== الواجهة العامة =====
 
 function Panels.build(parent: Instance)
@@ -9738,9 +11312,10 @@ function Panels.build(parent: Instance)
 	}, parent)
 
 	buildInventory(root)
-	buildCrafting(root)
+	buildStation(root)
 	buildShop(parent)
 	buildTooltip(parent)
+	setAvailableTabs({ "craft" })
 end
 
 function Panels.setOpen(open: boolean)
@@ -9749,6 +11324,12 @@ function Panels.setOpen(open: boolean)
 	if not open then
 		selected = nil
 		showTooltip(nil)
+		if stationData then
+			Net.get("Station"):FireServer("close")
+			stationData = nil
+		end
+		stationTitle.Text = "التصنيع"
+		setAvailableTabs({ "craft" })
 	else
 		craftDirty = true
 	end
@@ -9756,6 +11337,44 @@ end
 
 function Panels.isOpen(): boolean
 	return root.Visible
+end
+
+-- استُدعيت عند فتح محطة من العالم (الزر الأيمن على البلاطة)
+function Panels.openStation(payload: any)
+	if type(payload) ~= "table" or payload.open ~= true then
+		stationData = nil
+		if root.Visible then
+			stationTitle.Text = "التصنيع"
+			setAvailableTabs({ "craft" })
+		end
+		return
+	end
+
+	stationData = payload
+	root.Visible = true
+	State.uiOpen = true
+	stationTitle.Text = STATION_NAMES[payload.kind] or "محطة"
+
+	local tabs = { "craft" }
+	if payload.kind == "furnace" then
+		table.insert(tabs, "smelt")
+	elseif payload.kind == "anvil" then
+		table.insert(tabs, "upgrade")
+	elseif payload.kind == "enchant" then
+		table.insert(tabs, "enchant")
+	end
+
+	-- افتح مباشرة على التبويب المميّز لهذه المحطة
+	local preferred = tabs[#tabs]
+	activeTab = preferred
+	setAvailableTabs(tabs)
+	craftDirty = true
+end
+
+function Panels.closeAll()
+	Panels.setOpen(false)
+	shopPanel.Visible = false
+	State.shopOpen = false
 end
 
 function Panels.openShop(payload: any)
@@ -9770,75 +11389,75 @@ function Panels.openShop(payload: any)
 	end
 end
 
-function Panels.closeAll()
-	Panels.setOpen(false)
-	shopPanel.Visible = false
-	State.shopOpen = false
-end
-
 function Panels.onInventoryChanged()
 	craftDirty = true
 	if shopPanel.Visible and shopData then
-		local coins = 0
-		for i = 1, Config.INV_SLOTS do
-			local stack = State.slots[i]
-			if stack and stack.id == "coin" then coins += stack.n end
-		end
-		shopData.coins = coins
-		shopCoins.Text = string.format("عملاتك: %d", coins)
+		shopData.coins = Inventory.count(State.slots, "coin")
+		shopCoins.Text = string.format("عملاتك: %d", shopData.coins)
 	end
 end
 
 function Panels.update(dt: number)
 	if not root.Visible then return end
 
-	for i, entry in slotButtons do
+	for i, view in slotButtons do
 		local stack = State.slots[i]
 		local isSelected = selected == i
-		entry.button.BackgroundColor3 = if isSelected then Theme.colors.slotActive
+		view.button.BackgroundColor3 = if isSelected then Theme.colors.slotActive
 			elseif i <= Config.HOTBAR then Theme.colors.slotHover
 			else Theme.colors.slot
-		if stack then
-			local item = Items.get(stack.id)
-			entry.swatch.Visible = true
-			entry.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
-			entry.count.Text = if stack.n > 1 then tostring(stack.n) else ""
-		else
-			entry.swatch.Visible = false
-			entry.count.Text = ""
-		end
+		paintSlot(view, stack)
 	end
 
-	for slotName, entry in armorButtons do
-		local stack = State.armor[slotName]
-		if stack then
-			local item = Items.get(stack.id)
-			entry.swatch.Visible = true
-			entry.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
-		else
-			entry.swatch.Visible = false
-		end
+	for slotName, view in armorButtons do
+		paintSlot(view, State.armor[slotName])
 	end
 
-	-- تحديث قائمة التصنيع بمعدل منخفض (مكلفة نسبياً)
-	-- قائمة التصنيع مكلفة البناء: نعيدها فقط عند تغيّر المخزون أو المحطات القريبة
-	craftRefresh -= dt
-	if craftRefresh <= 0 then
-		craftRefresh = 0.35
-		local stations = stationsNear()
-		local keys = {}
-		for station in stations do table.insert(keys, station) end
-		table.sort(keys)
-		if table.concat(keys, ",") ~= stationSignature then
-			craftDirty = true
+	if activeTab == "craft" then
+		craftRefresh -= dt
+		if craftRefresh <= 0 then
+			craftRefresh = 0.35
+			local stations = stationsNear()
+			local keys = {}
+			for station in stations do table.insert(keys, station) end
+			table.sort(keys)
+			if table.concat(keys, ",") ~= stationSignature then craftDirty = true end
 		end
-	end
-	if craftDirty then
-		craftDirty = false
-		refreshCrafting()
+		if craftDirty then
+			craftDirty = false
+			refreshCrafting()
+		end
+
+	elseif activeTab == "smelt" then
+		if stationData then
+			for slotName, view in furnaceSlots do
+				paintSlot(view, stackOf(stationData[slotName]))
+			end
+			local progressMax = stationData.progressMax or 0
+			Theme.setBar(furnaceProgress, stationData.progress or 0, math.max(0.01, progressMax),
+				if progressMax > 0 then string.format("%.0f%%", (stationData.progress or 0) / progressMax * 100) else "متوقف")
+			local burnMax = stationData.burnMax or 0
+			Theme.setBar(furnaceBurn, stationData.burn or 0, math.max(0.01, burnMax),
+				if (stationData.burn or 0) > 0 then string.format("وقود %.0fث", stationData.burn) else "بلا وقود")
+
+			local input = stackOf(stationData.input)
+			local smelt = Smelting.recipeFor(if input then input.id else nil)
+			if not input then
+				furnaceHint.Text = "ضع مادة خاماً في خانة المادة، ووقوداً (فحم أو خشب) في خانة الوقود."
+			elseif not smelt then
+				furnaceHint.Text = "هذه المادة لا تُصهر."
+			elseif (stationData.burn or 0) <= 0 and Smelting.fuelValue(if stackOf(stationData.fuel) then (stackOf(stationData.fuel) :: Inventory.Stack).id else nil) <= 0 then
+				furnaceHint.Text = "الفرن بحاجة إلى وقود."
+			else
+				furnaceHint.Text = string.format("يصهر %s ← %s. الفرن يعمل حتى وأنت بعيد عنه.",
+					Items.name(input.id), Items.name(smelt.out))
+			end
+		end
+
+	elseif activeTab == "upgrade" or activeTab == "enchant" then
+		refreshModTab(activeTab)
 	end
 
-	-- التلميح يتبع المؤشر
 	if tooltip.Visible then
 		local mouse = UserInputService:GetMouseLocation()
 		local inset = GuiService:GetGuiInset()
@@ -9850,7 +11469,7 @@ return Panels
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="42">
+          <Item class="ModuleScript" referent="45">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--!strict
@@ -10010,7 +11629,7 @@ return Theme
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="43">
+  <Item class="Workspace" referent="46">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">0</float>

@@ -11,6 +11,7 @@ local Buffs = require(Shared.Buffs)
 local Config = require(Shared.Config)
 local Items = require(Shared.Items)
 local Net = require(Shared.Net)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local WorldGen = require(Shared.WorldGen)
 
@@ -30,7 +31,7 @@ local coinLabel: TextLabel
 local buffRow: Frame
 local buffIcons: { Frame } = {}
 local buffSignature = ""
-local hotbarSlots: { { root: TextButton, swatch: Frame, count: TextLabel, key: TextLabel } } = {}
+local hotbarSlots: { { root: TextButton, swatch: Frame, count: TextLabel, key: TextLabel, glow: UIStroke } } = {}
 local hotbarName: TextLabel
 local bossFrame: Frame
 local bossBar: Theme.Bar
@@ -145,7 +146,7 @@ local function buildHotbar(parent: Instance)
 			ZIndex = 31,
 		}, box)
 		Theme.corner(button, 8)
-		Theme.stroke(button, Color3.fromRGB(10, 10, 14), 2)
+		local glow = Theme.stroke(button, Color3.fromRGB(10, 10, 14), 2)
 
 		local swatch = Theme.new("Frame", {
 			BackgroundColor3 = Color3.fromRGB(200, 200, 200),
@@ -188,7 +189,7 @@ local function buildHotbar(parent: Instance)
 			if onHotbarSelect then onHotbarSelect(i) end
 		end)
 
-		table.insert(hotbarSlots, { root = button, swatch = swatch, count = count, key = key })
+		table.insert(hotbarSlots, { root = button, swatch = swatch, count = count, key = key, glow = glow })
 	end
 end
 
@@ -437,21 +438,26 @@ function Hud.update(dt: number)
 			slot.swatch.Visible = true
 			slot.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
 			slot.count.Text = if stack.n > 1 then tostring(stack.n) else ""
+			-- إطار متوهج للأغراض المطوّرة أو المسحورة
+			if Upgrades.isModified(stack) then
+				slot.glow.Color = Upgrades.displayColor(stack)
+				slot.glow.Thickness = 2.5
+			else
+				slot.glow.Color = Color3.fromRGB(10, 10, 14)
+				slot.glow.Thickness = 2
+			end
 		else
 			slot.swatch.Visible = false
 			slot.count.Text = ""
+			slot.glow.Color = Color3.fromRGB(10, 10, 14)
+			slot.glow.Thickness = 2
 		end
 	end
 
 	local held = State.heldItem()
-	if held then
-		local item = Items.get(held.id)
-		if item then
-			hotbarName.Text = item.name
-			hotbarName.TextColor3 = Items.RARITY_COLORS[item.rarity] or Theme.colors.text
-		else
-			hotbarName.Text = held.id
-		end
+	if held and Items.get(held.id) then
+		hotbarName.Text = Upgrades.displayName(held)
+		hotbarName.TextColor3 = Upgrades.displayColor(held)
 	else
 		hotbarName.Text = ""
 	end

@@ -20,6 +20,7 @@ local Inventory = require(Shared.Inventory)
 local Items = require(Shared.Items)
 local Mining = require(Shared.Mining)
 local Net = require(Shared.Net)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 local WorldGen = require(Shared.WorldGen)
@@ -89,11 +90,17 @@ local function ensureRegion(rx: number, ry: number)
 	regionState[key] = "loading"
 	local data = SaveService.loadRegion(rx, ry)
 	if type(data) == "table" then
-		for chunkKey, flat in data do
+		-- الصيغة الحالية: { tiles = {...}, stations = {...} }
+		-- الصيغة الأقدم: خريطة مسطّحة من مفتاح القطعة إلى التعديلات
+		local tiles = if type(data.tiles) == "table" then data.tiles else data
+		for chunkKey, flat in tiles do
 			if type(flat) == "table" then
 				local cx, cy = Chunk.parseKey(chunkKey)
 				World.applyEncodedDiff(world, cx, cy, flat)
 			end
+		end
+		if type(data.stations) == "table" and Services.Station then
+			Services.Station.importRegion(data.stations)
 		end
 	end
 	regionState[key] = "ready"
@@ -105,6 +112,13 @@ local function markDirty(cx: number, cy: number)
 end
 
 function WorldService.saveDirtyRegions()
+	-- ادمج المناطق التي غيّرتها المحطات (محتويات الأفران)
+	if Services.Station then
+		for key in Services.Station.consumeDirtyRegions() do
+			dirtyRegions[key] = true
+		end
+	end
+
 	local pending = {}
 	for key in dirtyRegions do
 		table.insert(pending, key)
@@ -114,19 +128,21 @@ function WorldService.saveDirtyRegions()
 	for _, key in pending do
 		local parts = string.split(key, ",")
 		local rx, ry = tonumber(parts[1]) or 0, tonumber(parts[2]) or 0
-		local payload: { [string]: { number } } = {}
+		local tiles: { [string]: { number } } = {}
 		local any = false
 		for cy = ry * Config.REGION, (ry + 1) * Config.REGION - 1 do
 			for cx = rx * Config.REGION, (rx + 1) * Config.REGION - 1 do
 				local flat = World.encodeDiff(world, cx, cy)
 				if flat and #flat > 0 then
-					payload[Chunk.keyOf(cx, cy)] = flat
+					tiles[Chunk.keyOf(cx, cy)] = flat
 					any = true
 				end
 			end
 		end
-		if any then
-			SaveService.saveRegion(rx, ry, payload)
+
+		local stations = if Services.Station then Services.Station.exportRegion(rx, ry) else nil
+		if any or stations then
+			SaveService.saveRegion(rx, ry, { tiles = tiles, stations = stations } :: any)
 		end
 		task.wait(0.12) -- احترام حدود معدّل DataStore
 	end
@@ -312,12 +328,13 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 	if not World.inBounds(x, y) then return end
 	if y >= Config.BEDROCK_Y then return end
 
-	local px, py = state.body.x, state.body.y
-	if Util.dist(px, py, x + 0.5, y + 0.5) > Config.REACH + 1.2 then return end
-	if not consumeToken(player) then return end
-
 	local held = Services.Player.heldItem(player)
 	local heldId = if held then held.id else nil
+
+	local px, py = state.body.x, state.body.y
+	local reach = Config.REACH + Upgrades.reachBonus(held) + 1.2
+	if Util.dist(px, py, x + 0.5, y + 0.5) > reach then return end
+	if not consumeToken(player) then return end
 
 	if layer == "wall" then
 		local item = if heldId then Items.get(heldId) else nil
@@ -341,7 +358,12 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 	if blockId == B.AIR or Blocks.isLiquid(blockId) then return end
 
 	local buffs = Services.Player.buffAggregate(player)
-	local required = WorldService.breakTime(blockId, heldId, buffs.mining)
+	local required = Mining.breakTime(
+		blockId,
+		heldId,
+		buffs.mining * Upgrades.miningMultiplier(held),
+		Upgrades.powerBonus(held)
+	)
 	if not required then
 		Net.get("Notify"):FireClient(player, { text = "تحتاج معولاً أقوى", color = { 230, 160, 80 } })
 		return
@@ -356,6 +378,11 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 	local block = Blocks.get(blockId)
 	local wall = World.bg(world, x, y)
 	local extraLogs = 0
+
+	-- محطة ذات حالة: انثر محتوياتها قبل إزالتها
+	if block.station and Services.Station then
+		Services.Station.onBlockRemoved(x, y)
+	end
 
 	if blockId == B.LOG then
 		extraLogs = fellTree(x, y) - 1
@@ -380,6 +407,11 @@ local function handleBreak(player: Player, x: number, y: number, layer: string)
 		elseif blockId == B.GRASS_TUFT or blockId == B.FLOWER then
 			dropItem = if math.random() < 0.35 then "herb" else dropItem
 		end
+		-- صفة «موفّق»: فرصة مضاعفة الإسقاط
+		local fortune = Upgrades.fortune(held)
+		if fortune > 0 and math.random() < fortune then
+			count *= 2
+		end
 		Services.Player.giveItem(player, dropItem, count, x + 0.5, y + 0.5)
 	end
 
@@ -395,7 +427,8 @@ local function handlePlace(player: Player, x: number, y: number, layer: string, 
 	if y >= Config.BEDROCK_Y or y < Config.SKY_TOP then return end
 
 	local px, py = state.body.x, state.body.y
-	if Util.dist(px, py, x + 0.5, y + 0.5) > Config.REACH + 1.2 then return end
+	local reach = Config.REACH + Upgrades.reachBonus(Services.Player.heldItem(player)) + 1.2
+	if Util.dist(px, py, x + 0.5, y + 0.5) > reach then return end
 	if not consumeToken(player) then return end
 
 	local stack = state.slots[slotIndex]

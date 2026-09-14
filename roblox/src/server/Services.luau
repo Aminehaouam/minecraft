@@ -13,5 +13,6 @@ Services.Player = nil :: any
 Services.Entity = nil :: any
 Services.Combat = nil :: any
 Services.Craft = nil :: any
+Services.Station = nil :: any
 
 return Services

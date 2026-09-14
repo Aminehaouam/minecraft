@@ -11,7 +11,7 @@ local Items = require(script.Parent.Items)
 local Mining = {}
 
 -- يُعيد زمن الكسر بالثواني، أو nil إن كانت البلاطة غير قابلة للكسر بهذه الأداة
-function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: number?): number?
+function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: number?, powerBonus: number?): number?
 	local block = Blocks.get(blockId)
 	if block.hard == math.huge then return nil end
 	if blockId == Blocks.ID.AIR then return nil end
@@ -19,6 +19,7 @@ function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: nu
 	local item = if itemId then Items.get(itemId) else nil
 	local power = 0
 	local matching = false
+	local bonus = powerBonus or 0 -- قوة إضافية من تطوير الأداة (+1..+5)
 
 	if item then
 		if block.tool == "pickaxe" and item.pick then
@@ -31,6 +32,10 @@ function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: nu
 			matching = true
 			power = math.max(item.pick or 0, item.axe or 0)
 		end
+	end
+
+	if power > 0 or bonus > 0 then
+		power += bonus
 	end
 
 	if block.pick > 0 and power < block.pick then
@@ -49,8 +54,8 @@ function Mining.breakTime(blockId: number, itemId: string?, miningMultiplier: nu
 end
 
 -- هل يستطيع هذا العنصر كسر هذه البلاطة أصلاً؟
-function Mining.canBreak(blockId: number, itemId: string?): boolean
-	return Mining.breakTime(blockId, itemId, 1) ~= nil
+function Mining.canBreak(blockId: number, itemId: string?, powerBonus: number?): boolean
+	return Mining.breakTime(blockId, itemId, 1, powerBonus) ~= nil
 end
 
 return Mining

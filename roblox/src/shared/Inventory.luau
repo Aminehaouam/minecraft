@@ -7,10 +7,13 @@
 local Config = require(script.Parent.Config)
 local Items = require(script.Parent.Items)
 local Recipes = require(script.Parent.Recipes)
+local Upgrades = require(script.Parent.Upgrades)
 
 local Inventory = {}
 
-export type Stack = { id: string, n: number }
+-- `up` يحمل مستوى التطوير والصفة السحرية. الأغراض القابلة للتطوير حدّ تكديسها 1،
+-- لذا لا يلتقي كومان مختلفان في الدمج أبداً — لكننا نحرس ذلك صراحة على أي حال.
+export type Stack = { id: string, n: number, up: Upgrades.Upgrade? }
 export type Slots = { [number]: Stack? }
 
 function Inventory.new(): Slots
@@ -19,7 +22,11 @@ end
 
 function Inventory.copyStack(stack: Stack?): Stack?
 	if not stack then return nil end
-	return { id = stack.id, n = stack.n }
+	local copy: Stack = { id = stack.id, n = stack.n }
+	if stack.up then
+		copy.up = { lvl = stack.up.lvl, aff = stack.up.aff }
+	end
+	return copy
 end
 
 -- إضافة عناصر؛ تُعيد الكمية المتبقية التي لم تتسع
@@ -29,10 +36,10 @@ function Inventory.add(slots: Slots, id: string, n: number, limit: number?): num
 	local max = item.max
 	local slotCount = limit or Config.INV_SLOTS
 
-	-- أولاً: أكمل الأكوام الموجودة
+	-- أولاً: أكمل الأكوام الموجودة (لا ندمج في كومة مطوّرة أو مسحورة)
 	for i = 1, slotCount do
 		local stack = slots[i]
-		if stack and stack.id == id and stack.n < max then
+		if stack and stack.id == id and stack.n < max and stack.up == nil then
 			local space = max - stack.n
 			local take = math.min(space, n)
 			stack.n += take
@@ -52,6 +59,21 @@ function Inventory.add(slots: Slots, id: string, n: number, limit: number?): num
 	end
 
 	return n
+end
+
+-- إضافة كومة كما هي (مع تطويرها) — تُستعمل لإعادة غرض مطوّر إلى اللاعب
+function Inventory.addStack(slots: Slots, stack: Stack, limit: number?): boolean
+	if not stack.up then
+		return Inventory.add(slots, stack.id, stack.n, limit) == 0
+	end
+	local slotCount = limit or Config.INV_SLOTS
+	for i = 1, slotCount do
+		if not slots[i] then
+			slots[i] = Inventory.copyStack(stack)
+			return true
+		end
+	end
+	return false
 end
 
 function Inventory.count(slots: Slots, id: string): number
@@ -127,8 +149,8 @@ function Inventory.swap(slots: Slots, a: number, b: number)
 	if a == b then return end
 	local sa, sb = slots[a], slots[b]
 
-	-- دمج الأكوام المتطابقة
-	if sa and sb and sa.id == sb.id then
+	-- دمج الأكوام المتطابقة (الأغراض المطوّرة لا تندمج أبداً)
+	if sa and sb and sa.id == sb.id and sa.up == nil and sb.up == nil then
 		local max = Items.maxStack(sa.id)
 		local move = math.min(max - sb.n, sa.n)
 		if move > 0 then
@@ -148,7 +170,12 @@ function Inventory.serialize(slots: Slots): { any }
 	for i = 1, Config.INV_SLOTS do
 		local stack = slots[i]
 		if stack then
-			table.insert(out, { i, stack.id, stack.n } :: { any })
+			local entry: { any } = { i, stack.id, stack.n }
+			if stack.up then
+				entry[4] = stack.up.lvl
+				entry[5] = stack.up.aff or ""
+			end
+			table.insert(out, entry)
 		end
 	end
 	return out
@@ -162,7 +189,11 @@ function Inventory.deserialize(data: { any }?): Slots
 			local index, id, n = entry[1], entry[2], entry[3]
 			if type(index) == "number" and type(id) == "string" and type(n) == "number" then
 				if index >= 1 and index <= Config.INV_SLOTS and Items.get(id) and n > 0 then
-					slots[index] = { id = id, n = math.min(n, Items.maxStack(id)) }
+					local stack: Stack = { id = id, n = math.min(n, Items.maxStack(id)) }
+					if type(entry[4]) == "number" and Upgrades.canModify(id) then
+						stack.up = Upgrades.normalize({ lvl = entry[4], aff = entry[5] })
+					end
+					slots[index] = stack
 				end
 			end
 		end
@@ -175,7 +206,14 @@ function Inventory.toNetwork(slots: Slots): { [number]: any }
 	local out: { [number]: any } = {}
 	for i = 1, Config.INV_SLOTS do
 		local stack = slots[i]
-		if stack then out[i] = { stack.id, stack.n } :: { any } end
+		if stack then
+			local entry: { any } = { stack.id, stack.n }
+			if stack.up then
+				entry[3] = stack.up.lvl
+				entry[4] = stack.up.aff or ""
+			end
+			out[i] = entry
+		end
 	end
 	return out
 end

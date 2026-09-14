@@ -42,6 +42,8 @@ local Physics = __req("Physics")
 local Mining = __req("Mining")
 local Inventory = __req("Inventory")
 local Mobs = __req("Mobs")
+local Smelting = __req("Smelting")
+local Upgrades = __req("Upgrades")
 
 local B = Blocks.ID
 local SEED = 123456
@@ -440,8 +442,11 @@ do
 		obtainable[id] = true
 	end
 
-	-- طبّق الوصفات مراراً حتى يستقر ما يمكن صنعه
+	-- طبّق الوصفات *والصهر* مراراً حتى يستقر ما يمكن صنعه
 	for _ = 1, 12 do
+		for input, smelt in Smelting.recipes do
+			if obtainable[input] then obtainable[smelt.out] = true end
+		end
 		for _, recipe in Recipes.list do
 			local ready = true
 			for _, ingredient in recipe.ins do
@@ -454,17 +459,23 @@ do
 		end
 	end
 
-	-- كل ما له وصفة يجب أن يكون قابلاً للوصول
+	-- كل ما له وصفة أو صهر يجب أن يكون قابلاً للوصول
 	local unreachable = {}
 	for _, recipe in Recipes.list do
 		if not obtainable[recipe.out.id] then
 			table.insert(unreachable, recipe.out.id)
 		end
 	end
-	eq(#unreachable, 0, "كل عنصر مُصنَّع قابل للوصول: " .. table.concat(unreachable, ", "))
+	for _, smelt in Smelting.recipes do
+		if not obtainable[smelt.out] then
+			table.insert(unreachable, smelt.out)
+		end
+	end
+	eq(#unreachable, 0, "كل عنصر مُصنَّع أو مصهور قابل للوصول: " .. table.concat(unreachable, ", "))
 
 	-- أهم عناصر نهاية اللعبة
-	for _, id in { "night_edge", "mythril_chest", "flame_staff", "hell_bow", "magic_mirror", "eye_totem" } do
+	for _, id in { "night_edge", "mythril_chest", "flame_staff", "hell_bow", "magic_mirror",
+		"eye_totem", "enchant_table", "upgrade_core", "magic_essence", "hellstone_brick" } do
 		ok(obtainable[id] == true, "عنصر نهاية اللعبة قابل للوصول: " .. id)
 	end
 end
@@ -506,6 +517,197 @@ do
 	local perChunk = (os.clock() - start) / samples * 1000
 	print(string.format("  متوسط زمن توليد القطعة: %.2f مللي ثانية", perChunk))
 	ok(perChunk < 60, string.format("توليد القطعة سريع بما يكفي (%.2f مللي ثانية)", perChunk))
+end
+
+
+-- ===== الصهر =====
+do
+	local bad = 0
+	for input, recipe in Smelting.recipes do
+		if not Items.get(input) then bad += 1 end
+		if not Items.get(recipe.out) then bad += 1 end
+		if recipe.time <= 0 or recipe.n <= 0 then bad += 1 end
+	end
+	eq(bad, 0, "كل وصفات الصهر تشير إلى عناصر موجودة")
+
+	local badFuel = 0
+	for id, value in Smelting.fuels do
+		if not Items.get(id) then badFuel += 1 end
+		if value <= 0 then badFuel += 1 end
+	end
+	eq(badFuel, 0, "كل أنواع الوقود صالحة")
+
+	ok(Smelting.recipeFor("iron_ore") ~= nil, "خام الحديد يُصهر")
+	eq(Smelting.recipeFor("iron_ore").out, "iron_bar", "خام الحديد يعطي سبيكة حديد")
+	eq(Smelting.recipeFor("iron_bar"), nil, "السبيكة لا تُصهر مرة أخرى")
+	ok(Smelting.isFuel("coal"), "الفحم وقود")
+	ok(not Smelting.isFuel("iron_bar"), "السبيكة ليست وقوداً")
+	ok(Smelting.fuelValue("coal") > Smelting.fuelValue("wood"), "الفحم يحترق أطول من الخشب")
+
+	-- كل سبيكة يجب أن تكون قابلة للحصول عبر الصهر
+	for _, bar in { "copper_bar", "iron_bar", "silver_bar", "gold_bar", "mythril_bar", "hellstone_bar" } do
+		local found = false
+		for _, recipe in Smelting.recipes do
+			if recipe.out == bar then found = true break end
+		end
+		ok(found, "السبيكة قابلة للصهر: " .. bar)
+	end
+end
+
+-- ===== التطوير والسحر =====
+do
+	-- الأهلية
+	ok(Upgrades.canModify("iron_sword"), "السيف قابل للتطوير")
+	ok(Upgrades.canModify("iron_pickaxe"), "المعول قابل للتطوير")
+	ok(Upgrades.canModify("iron_chest"), "الدرع قابل للتطوير")
+	ok(not Upgrades.canModify("stone"), "البلاطة غير قابلة للتطوير")
+	ok(not Upgrades.canModify("health_potion"), "الجرعة غير قابلة للتطوير")
+	eq(Upgrades.categoryOf("iron_sword"), "weapon", "تصنيف السلاح")
+	eq(Upgrades.categoryOf("iron_pickaxe"), "tool", "تصنيف الأداة")
+	eq(Upgrades.categoryOf("iron_helm"), "armor", "تصنيف الدرع")
+
+	-- التطوير يزيد الأرقام بشكل رتيب
+	local plain = { id = "iron_sword", n = 1 }
+	local base = Upgrades.damage(plain)
+	local previous = base
+	for level = 1, Upgrades.MAX_LEVEL do
+		local upgraded = { id = "iron_sword", n = 1, up = { lvl = level } }
+		local value = Upgrades.damage(upgraded)
+		ok(value > previous, string.format("+%d أقوى من +%d", level, level - 1))
+		previous = value
+	end
+	ok(previous >= base * 1.5, "التطوير الكامل يزيد الضرر 50% على الأقل")
+
+	local maxed = { id = "iron_pickaxe", n = 1, up = { lvl = 5 } }
+	eq(Upgrades.powerBonus(maxed), 20, "التطوير الكامل يعطي +20 قوة معول")
+	ok(Upgrades.useTime(maxed) < Upgrades.useTime({ id = "iron_pickaxe", n = 1 }), "التطوير يسرّع الاستخدام")
+	ok(Upgrades.miningMultiplier(maxed) > 1, "التطوير يسرّع التعدين")
+
+	-- المستوى مقصوص ضمن الحدود
+	eq(Upgrades.levelOf({ id = "iron_sword", n = 1, up = { lvl = 99 } }), Upgrades.MAX_LEVEL, "المستوى مقصوص للأعلى")
+	eq(Upgrades.levelOf({ id = "iron_sword", n = 1 }), 0, "بلا تطوير = صفر")
+
+	-- الصفات السحرية
+	local badAffix = 0
+	for category, pool in Upgrades.pools do
+		for _, affix in pool do
+			if affix.weight <= 0 then badAffix += 1 end
+			if affix.name == "" or affix.desc == "" then badAffix += 1 end
+			if Upgrades.affix(affix.id) == nil then badAffix += 1 end
+		end
+	end
+	eq(badAffix, 0, "كل الصفات السحرية معرّفة بالكامل")
+
+	-- الرمي يعطي دائماً صفة من الفئة الصحيحة
+	for _, category in { "weapon", "tool", "armor" } do
+		for i = 0, 20 do
+			local rolled = Upgrades.rollAffix(category, i / 21)
+			local found = false
+			for _, affix in Upgrades.pools[category] do
+				if affix.id == rolled then found = true break end
+			end
+			ok(found, "الصفة المرميّة تنتمي لفئة " .. category)
+		end
+	end
+
+	-- إعادة الرمي لا تعطي الصفة نفسها
+	local sameCount = 0
+	for i = 0, 30 do
+		if Upgrades.rollAffix("weapon", i / 31, "sharp") == "sharp" then sameCount += 1 end
+	end
+	eq(sameCount, 0, "إعادة الرمي تستبعد الصفة الحالية")
+
+	-- أثر الصفة على الأرقام
+	local sharp = { id = "iron_sword", n = 1, up = { lvl = 0, aff = "sharp" } }
+	ok(Upgrades.damage(sharp) > Upgrades.damage(plain), "صفة «حادّ» تزيد الضرر")
+	local swift = { id = "iron_sword", n = 1, up = { lvl = 0, aff = "swift" } }
+	ok(Upgrades.useTime(swift) < Upgrades.useTime(plain), "صفة «سريع» تقلّل زمن الاستخدام")
+	eq(Upgrades.reachBonus({ id = "iron_pickaxe", n = 1, up = { lvl = 0, aff = "far" } }), 1.5, "صفة «بعيد المدى» تضيف مدى")
+	eq(Upgrades.fortune({ id = "iron_pickaxe", n = 1, up = { lvl = 0, aff = "fortune" } }), 0.25, "صفة «موفّق» تضاعف الإسقاط")
+
+	-- مكافآت الدرع تتجمّع
+	local armor = {
+		head = { id = "iron_helm", n = 1, up = { lvl = 2, aff = "tough" } },
+		chest = { id = "iron_chest", n = 1, up = { lvl = 0, aff = "arcane" } },
+		feet = { id = "iron_boots", n = 1 },
+	}
+	local bonus = Upgrades.armorBonus(armor)
+	local plainArmor = Upgrades.armorBonus({
+		head = { id = "iron_helm", n = 1 },
+		chest = { id = "iron_chest", n = 1 },
+		feet = { id = "iron_boots", n = 1 },
+	})
+	ok(bonus.defense > plainArmor.defense, "الدرع المطوّر والمسحور يعطي دفاعاً أعلى")
+	eq(bonus.mana, 20, "صفة «غامض» تضيف 20 مانا")
+
+	-- التكاليف تتصاعد وتتوقف عند الحد الأقصى
+	local previousCost = 0
+	for level = 0, Upgrades.MAX_LEVEL - 1 do
+		local cost = Upgrades.upgradeCost("iron_sword", level)
+		ok(cost ~= nil, "توجد كلفة للمستوى " .. level)
+		ok(cost.amount > previousCost, "الكلفة تتصاعد مع المستوى")
+		previousCost = cost.amount
+	end
+	eq(Upgrades.upgradeCost("iron_sword", Upgrades.MAX_LEVEL), nil, "لا كلفة بعد الحد الأقصى")
+	ok(Upgrades.enchantCost("iron_sword") ~= nil, "توجد كلفة للسحر")
+	ok(Upgrades.enchantCost("night_edge").coins > Upgrades.enchantCost("wood_sword").coins,
+		"سحر السلاح النادر أغلى")
+
+	-- التنظيف يرفض البيانات الفاسدة
+	eq(Upgrades.normalize(nil), nil, "بيانات فارغة تُرفض")
+	eq(Upgrades.normalize({ lvl = 0 }), nil, "مستوى صفر بلا صفة = بلا تطوير")
+	eq(Upgrades.normalize({ lvl = 3, aff = "صفة_وهمية" }).aff, nil, "الصفة المجهولة تُحذف")
+	eq(Upgrades.normalize({ lvl = 99 }).lvl, Upgrades.MAX_LEVEL, "المستوى الفاسد يُقصّ")
+
+	-- التعدين يستفيد من قوة التطوير
+	local plainPick = Mining.breakTime(B.MYTHRIL_ORE, "diamond_pickaxe", 1, 0)
+	local boostedPick = Mining.breakTime(B.MYTHRIL_ORE, "diamond_pickaxe", 1, Upgrades.powerBonus(maxed))
+	ok(plainPick ~= nil and boostedPick ~= nil, "معول الألماس يكسر الميثريل")
+	ok(boostedPick < plainPick, "المعول المطوّر أسرع")
+
+	-- معول حجري مطوّر بالكامل ما زال عاجزاً عن الميثريل (التقدّم محفوظ)
+	eq(Mining.breakTime(B.MYTHRIL_ORE, "stone_pickaxe", 1, 20), nil,
+		"التطوير لا يكسر تسلسل التقدّم")
+end
+
+-- ===== المخزون يحافظ على التطوير =====
+do
+	local slots = Inventory.new()
+	slots[1] = { id = "iron_sword", n = 1, up = { lvl = 3, aff = "sharp" } }
+	slots[2] = { id = "iron_sword", n = 1 }
+
+	-- الأغراض المطوّرة لا تندمج مع العادية
+	Inventory.swap(slots, 1, 2)
+	ok(slots[1] ~= nil and slots[2] ~= nil, "السيفان بقيا منفصلين بعد التبديل")
+
+	local restored = Inventory.deserialize(Inventory.serialize(slots))
+	local found = nil
+	for i = 1, Config.INV_SLOTS do
+		local stack = restored[i]
+		if stack and stack.up then found = stack break end
+	end
+	ok(found ~= nil, "التطوير نجا من الحفظ والاسترجاع")
+	eq(found.up.lvl, 3, "مستوى التطوير محفوظ")
+	eq(found.up.aff, "sharp", "الصفة السحرية محفوظة")
+
+	-- الشبكة تنقل التطوير أيضاً
+	local net = Inventory.toNetwork(slots)
+	local networked = nil
+	for _, entry in net do
+		if entry[3] ~= nil then networked = entry break end
+	end
+	ok(networked ~= nil, "التطوير يُرسل عبر الشبكة")
+
+	-- addStack يحافظ على النسخة
+	local target = Inventory.new()
+	ok(Inventory.addStack(target, { id = "iron_helm", n = 1, up = { lvl = 2, aff = "tough" } }), "addStack نجح")
+	eq(target[1].up.lvl, 2, "addStack حافظ على المستوى")
+
+	-- بيانات تطوير فاسدة لا تُسقط اللعبة
+	local junk = Inventory.deserialize({ { 1, "iron_sword", 1, "نص", 5 }, { 2, "stone", 4, 3, "sharp" } })
+	ok(junk[1] ~= nil, "السيف نجا رغم بيانات التطوير الفاسدة")
+	eq(junk[1].up, nil, "التطوير الفاسد أُهمل")
+	eq(junk[2].up, nil, "البلاطات لا تحمل تطويراً")
 end
 
 -- ===== النتيجة =====

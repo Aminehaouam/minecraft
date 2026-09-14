@@ -125,7 +125,12 @@ def({
 	id = "stone_golem", name = "غول حجري", w = 2.2, h = 3.2, hp = 180, damage = 28, defense = 12,
 	speed = 3.2, jump = 10, ai = "walker", color = C(110, 108, 116), accent = C(70, 68, 76), eyes = true,
 	knockbackResist = 0.75, detect = 20, attackCd = 1.4,
-	drops = { { id = "stone", min = 6, max = 14, chance = 1 }, { id = "silver_ore", min = 1, max = 3, chance = 0.4 }, { id = "crystal", min = 1, max = 2, chance = 0.25 } },
+	drops = {
+		{ id = "stone", min = 6, max = 14, chance = 1 },
+		{ id = "silver_ore", min = 1, max = 3, chance = 0.4 },
+		{ id = "crystal", min = 1, max = 2, chance = 0.25 },
+		{ id = "upgrade_core", min = 1, max = 1, chance = 0.22 },
+	},
 	coins = { min = 12, max = 30 }, layer = "cavern", minDepth = 300, weight = 14,
 })
 
@@ -133,7 +138,11 @@ def({
 	id = "lava_imp", name = "عفريت الحمم", w = 1.4, h = 2.0, hp = 140, damage = 32, defense = 10,
 	speed = 7.0, jump = 0, ai = "flyer", color = C(214, 90, 54), accent = C(120, 40, 30), eyes = true,
 	knockbackResist = 0.4, detect = 28, attackCd = 1.2, projectile = "fireball",
-	drops = { { id = "hellstone_ore", min = 1, max = 3, chance = 0.5 }, { id = "soul_fragment", min = 1, max = 1, chance = 0.18 } },
+	drops = {
+		{ id = "hellstone_ore", min = 1, max = 3, chance = 0.5 },
+		{ id = "soul_fragment", min = 1, max = 1, chance = 0.18 },
+		{ id = "upgrade_core", min = 1, max = 2, chance = 0.28 },
+	},
 	coins = { min = 15, max = 40 }, layer = "hell", weight = 26,
 })
 
@@ -141,7 +150,11 @@ def({
 	id = "shadow_crawler", name = "زاحف الظل", w = 1.9, h = 1.6, hp = 160, damage = 30, defense = 9,
 	speed = 7.5, jump = 13, ai = "climber", color = C(70, 52, 96), accent = C(150, 110, 210), eyes = true,
 	knockbackResist = 0.3, detect = 26, attackCd = 0.8,
-	drops = { { id = "shadow_scale", min = 1, max = 3, chance = 0.8 }, { id = "soul_fragment", min = 1, max = 1, chance = 0.25 } },
+	drops = {
+		{ id = "shadow_scale", min = 1, max = 3, chance = 0.8 },
+		{ id = "soul_fragment", min = 1, max = 1, chance = 0.25 },
+		{ id = "magic_essence", min = 1, max = 2, chance = 0.3 },
+	},
 	coins = { min = 14, max = 34 }, layer = "cavern", minDepth = 340, weight = 16,
 })
 
@@ -155,6 +168,8 @@ def({
 		{ id = "shadow_scale", min = 10, max = 22, chance = 1 },
 		{ id = "diamond", min = 2, max = 5, chance = 0.7 },
 		{ id = "life_crystal", min = 1, max = 2, chance = 0.5 },
+		{ id = "upgrade_core", min = 3, max = 6, chance = 1 },
+		{ id = "magic_essence", min = 4, max = 8, chance = 1 },
 	},
 	coins = { min = 300, max = 600 }, layer = "any", weight = 0, boss = true,
 })

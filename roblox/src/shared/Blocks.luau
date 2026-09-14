@@ -62,6 +62,7 @@ local ID = {
 	STONE_BRICK = 23,
 	GLASS = 24,
 	SAND_BRICK = 25,
+	BRICK = 30,
 	ICE_BRICK = 26,
 	HELLSTONE_BRICK = 27,
 	OBSIDIAN = 28,
@@ -86,6 +87,7 @@ local ID = {
 	LADDER = 66,
 	LANTERN = 67,
 	ALCHEMY = 68,
+	ENCHANT_TABLE = 69,
 
 	GRASS_TUFT = 80,
 	FLOWER = 81,
@@ -129,6 +131,7 @@ def({ id = ID.PLANK, name = "ألواح", color = C(160, 116, 70), shade = 7, so
 def({ id = ID.STONE_BRICK, name = "طوب حجري", color = C(104, 104, 112), shade = 6, solid = true, opacity = 15, light = 0, hard = 1.3, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.GLASS, name = "زجاج", color = C(198, 232, 240), shade = 3, solid = true, opacity = 1, light = 0, hard = 0.3, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.SAND_BRICK, name = "طوب رملي", color = C(204, 178, 118), shade = 6, solid = true, opacity = 15, light = 0, hard = 1.2, tool = "pickaxe", pick = 0, sound = "hard" })
+def({ id = ID.BRICK, name = "طوب طيني", color = C(170, 96, 78), shade = 6, solid = true, opacity = 15, light = 0, hard = 1.3, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.ICE_BRICK, name = "طوب جليدي", color = C(186, 226, 246), shade = 5, solid = true, opacity = 8, light = 1, hard = 1.0, tool = "pickaxe", pick = 0, sound = "hard" })
 def({ id = ID.HELLSTONE_BRICK, name = "طوب جهنمي", color = C(126, 56, 44), shade = 8, solid = true, opacity = 15, light = 3, hard = 1.8, tool = "pickaxe", pick = 55, sound = "hard" })
 def({ id = ID.OBSIDIAN, name = "سبج", color = C(48, 36, 66), shade = 6, solid = true, opacity = 15, light = 0, hard = 4.0, tool = "pickaxe", pick = 65, sound = "hard" })
@@ -152,6 +155,7 @@ def({ id = ID.WORKBENCH, name = "طاولة عمل", color = C(150, 104, 62), sh
 def({ id = ID.FURNACE, name = "فرن", color = C(96, 92, 96), shade = 5, solid = false, opacity = 2, light = 8, hard = 1.4, tool = "pickaxe", pick = 0, station = "furnace", sound = "hard" })
 def({ id = ID.ANVIL, name = "سندان", color = C(76, 78, 86), shade = 4, solid = false, opacity = 2, light = 0, hard = 1.8, tool = "pickaxe", pick = 0, station = "anvil", sound = "hard" })
 def({ id = ID.ALCHEMY, name = "طاولة خيمياء", color = C(108, 78, 150), shade = 5, solid = false, opacity = 2, light = 4, hard = 1.0, tool = "axe", pick = 0, station = "alchemy", sound = "wood" })
+def({ id = ID.ENCHANT_TABLE, name = "طاولة السحر", color = C(86, 66, 156), shade = 6, solid = false, opacity = 2, light = 7, hard = 2.2, tool = "pickaxe", pick = 25, station = "enchant", sound = "hard" })
 def({ id = ID.CHEST, name = "صندوق", color = C(172, 124, 62), shade = 4, solid = false, opacity = 2, light = 0, hard = 0.8, tool = "axe", pick = 0, container = true, sound = "wood" })
 def({ id = ID.PLATFORM, name = "منصة", color = C(164, 122, 76), shade = 5, solid = false, opacity = 1, light = 0, hard = 0.3, tool = "axe", pick = 0, platform = true, sound = "wood" })
 def({ id = ID.LADDER, name = "سلّم", color = C(178, 138, 84), shade = 4, solid = false, opacity = 1, light = 0, hard = 0.3, tool = "axe", pick = 0, climb = true, attach = true, sound = "wood" })
