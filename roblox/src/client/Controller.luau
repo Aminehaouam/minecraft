@@ -444,7 +444,7 @@ local function updateActions(dt: number)
 	if input.secondary then
 		-- التفاعل مع محطة (فرن، طاولة عمل، سندان، طاولة سحر) له الأولوية
 		local block = Blocks.get(World.fg(ClientWorld.get(), tx, ty))
-		if block.station then
+		if block.station or block.container then
 			input.secondary = false
 			Net.get("Station"):FireServer("open", tx, ty)
 			fire("sfx", "ui")

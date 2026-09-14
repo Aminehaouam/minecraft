@@ -44,7 +44,7 @@ local tooltip: Frame
 local tooltipTitle: TextLabel
 local tooltipBody: TextLabel
 
-type SlotView = { button: TextButton, swatch: Frame, count: TextLabel, glow: UIStroke }
+type SlotView = { slot: Theme.Slot, button: TextButton, icon: ImageLabel, count: TextLabel, glow: UIStroke }
 
 local slotButtons: { SlotView } = {}
 local armorButtons: { [string]: SlotView } = {}
@@ -60,6 +60,8 @@ local craftSearch: TextBox
 local stationHint: TextLabel
 
 local furnaceSlots: { [string]: SlotView } = {}
+local chestSlots: { SlotView } = {}
+local chestHint: TextLabel
 local furnaceProgress: Theme.Bar
 local furnaceBurn: Theme.Bar
 local furnaceHint: TextLabel
@@ -82,14 +84,18 @@ local craftRefresh = 0
 local stationSignature = ""
 local searchText = ""
 
-local TAB_NAMES = { craft = "تصنيع", smelt = "صهر", upgrade = "تطوير", enchant = "سحر" }
+local TAB_NAMES = { craft = "تصنيع", smelt = "صهر", upgrade = "تطوير", enchant = "سحر", chest = "صندوق" }
 local STATION_NAMES = {
 	workbench = "طاولة العمل",
 	furnace = "الفرن",
 	anvil = "السندان",
 	alchemy = "طاولة الخيمياء",
 	enchant = "طاولة السحر",
+	chest = "الصندوق",
 }
+
+local CHEST_COLS = 9
+local CHEST_ROWS = 3
 
 -- ===== أدوات مشتركة =====
 
@@ -104,69 +110,45 @@ end
 
 local function makeSlot(parent: Instance, position: UDim2, size: number?): SlotView
 	local edge = size or SLOT
-	local button = Theme.new("TextButton", {
-		BackgroundColor3 = Theme.colors.slot,
-		BorderSizePixel = 0,
-		Text = "",
-		AutoButtonColor = false,
-		Size = UDim2.fromOffset(edge, edge),
-		Position = position,
-		ZIndex = 32,
-	}, parent)
-	Theme.corner(button, 7)
-	local glow = Theme.stroke(button, Color3.fromRGB(10, 10, 14), 1.5)
+	local slot = Theme.slotButton(parent, edge, position)
+	local glow = Theme.stroke(slot.button, Color3.fromRGB(10, 10, 14), 2)
+	glow.Transparency = 1
 
-	local swatch = Theme.new("Frame", {
-		BackgroundColor3 = Color3.fromRGB(200, 200, 200),
-		BorderSizePixel = 0,
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.45),
-		Size = UDim2.fromOffset(edge * 0.56, edge * 0.56),
-		Visible = false,
-		ZIndex = 33,
-	}, button)
-	Theme.corner(swatch, 5)
+	local icon = Theme.itemIcon(slot.button, math.floor(edge * 0.66), 33)
 
 	local count = Theme.new("TextLabel", {
 		BackgroundTransparency = 1,
-		Font = Theme.fontBold,
+		Font = Theme.fontNumber,
 		Text = "",
 		TextSize = 12,
 		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextStrokeTransparency = 0.35,
+		TextStrokeTransparency = 0.2,
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -3, 1, -1),
 		Size = UDim2.fromOffset(38, 14),
 		TextXAlignment = Enum.TextXAlignment.Right,
 		ZIndex = 34,
-	}, button)
+	}, slot.button)
 
-	return { button = button, swatch = swatch, count = count, glow = glow }
+	return { slot = slot, button = slot.button, icon = icon, count = count, glow = glow }
 end
 
-local function paintSlot(view: SlotView, stack: Inventory.Stack?, highlighted: boolean?)
+local function paintSlot(view: SlotView, stack: Inventory.Stack?, state: string?)
 	if stack then
-		local item = Items.get(stack.id)
-		view.swatch.Visible = true
-		view.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
+		Theme.setItemIcon(view.icon, stack.id)
 		view.count.Text = if stack.n > 1 then tostring(stack.n) else ""
 		if Upgrades.isModified(stack) then
-			-- إطار متوهج يميّز الغرض المطوّر أو المسحور
 			view.glow.Color = Upgrades.displayColor(stack)
-			view.glow.Thickness = 2.5
+			view.glow.Transparency = 0.15
 		else
-			view.glow.Color = Color3.fromRGB(10, 10, 14)
-			view.glow.Thickness = 1.5
+			view.glow.Transparency = 1
 		end
 	else
-		view.swatch.Visible = false
+		Theme.setItemIcon(view.icon, nil)
 		view.count.Text = ""
-		view.glow.Color = Color3.fromRGB(10, 10, 14)
-		view.glow.Thickness = 1.5
+		view.glow.Transparency = 1
 	end
-	if highlighted ~= nil then
-		view.button.BackgroundColor3 = if highlighted then Theme.colors.slotActive else Theme.colors.slot
-	end
+	Theme.setSlotState(view.slot, state or "normal")
 end
 
 -- ===== التلميح =====
@@ -406,15 +388,10 @@ local function refreshCrafting()
 				}, craftList)
 				Theme.corner(row, 7)
 
-				local swatch = Theme.new("Frame", {
-					BackgroundColor3 = outItem.color,
-					BorderSizePixel = 0,
-					AnchorPoint = Vector2.new(1, 0.5),
-					Position = UDim2.new(1, -8, 0.5, 0),
-					Size = UDim2.fromOffset(30, 30),
-					ZIndex = 33,
-				}, row)
-				Theme.corner(swatch, 5)
+				local icon = Theme.itemIcon(row, 30, 33)
+				icon.AnchorPoint = Vector2.new(1, 0.5)
+				icon.Position = UDim2.new(1, -8, 0.5, 0)
+				Theme.setItemIcon(icon, recipe.out.id)
 
 				local name = Theme.label(row, string.format("%s ×%d", outItem.name, recipe.out.n), 14,
 					Items.RARITY_COLORS[outItem.rarity] or Theme.colors.text)
@@ -581,6 +558,80 @@ local function buildSmeltTab(parent: Instance): Frame
 		height += 19
 	end
 	reference.CanvasSize = UDim2.fromOffset(0, height)
+
+	return frame
+end
+
+-- ===== تبويب الصندوق =====
+
+local function chestClicked(index: number)
+	if not stationData then return end
+	local x, y = stationData.x, stationData.y
+
+	if selected then
+		Net.get("Station"):FireServer("chest_swap", x, y, selected, index)
+		selected = nil
+		return
+	end
+
+	-- بلا اختيار: أخرِج الكومة إلى أول خانة فارغة في المخزون
+	local slots = stationData.slots or {}
+	if not slots[index] then return end
+	for i = 1, Config.INV_SLOTS do
+		if not State.slots[i] then
+			Net.get("Station"):FireServer("chest_swap", x, y, i, index)
+			return
+		end
+	end
+end
+
+local function buildChestTab(parent: Instance): Frame
+	local frame = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		ZIndex = 31,
+	}, parent)
+
+	local intro = Theme.label(frame,
+		"اختر خانة من مخزونك ثم انقر خانة في الصندوق للتبديل، أو انقر كومة في الصندوق لسحبها.",
+		12, Theme.colors.textDim)
+	intro.Size = UDim2.new(1, 0, 0, 32)
+	intro.TextWrapped = true
+
+	local slotSize = 38
+	local gap = 4
+	local grid = Theme.new("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 38),
+		Size = UDim2.fromOffset(CHEST_COLS * (slotSize + gap), CHEST_ROWS * (slotSize + gap)),
+		ZIndex = 31,
+	}, frame)
+
+	for i = 1, CHEST_COLS * CHEST_ROWS do
+		local col = (i - 1) % CHEST_COLS
+		local row = (i - 1) // CHEST_COLS
+		local view = makeSlot(grid, UDim2.fromOffset(col * (slotSize + gap), row * (slotSize + gap)), slotSize)
+		view.button.MouseButton1Click:Connect(function() chestClicked(i) end)
+		hookTooltip(view.button, function()
+			if not stationData then return nil end
+			return stackOf((stationData.slots or {})[i])
+		end)
+		table.insert(chestSlots, view)
+	end
+
+	local deposit = Theme.button(frame, "أودِع المتماثل",
+		UDim2.fromOffset(150, 30), UDim2.fromOffset(0, 38 + CHEST_ROWS * (slotSize + gap) + 10))
+	deposit.MouseButton1Click:Connect(function()
+		if stationData then
+			Net.get("Station"):FireServer("chest_deposit", stationData.x, stationData.y)
+		end
+	end)
+
+	chestHint = Theme.label(frame, "", 12, Theme.colors.textDim)
+	chestHint.Position = UDim2.fromOffset(0, 38 + CHEST_ROWS * (slotSize + gap) + 48)
+	chestHint.Size = UDim2.new(1, 0, 0, 36)
+	chestHint.TextWrapped = true
 
 	return frame
 end
@@ -784,7 +835,7 @@ local function buildStation(parent: Instance)
 		ZIndex = 31,
 	}, stationPanel)
 
-	for _, tab in { "craft", "smelt", "upgrade", "enchant" } do
+	for _, tab in { "craft", "smelt", "chest", "upgrade", "enchant" } do
 		local button = Theme.button(tabRow, TAB_NAMES[tab], UDim2.fromOffset(78, 26), UDim2.fromOffset(0, 0))
 		button.Visible = false
 		button.MouseButton1Click:Connect(function() setTab(tab) end)
@@ -800,6 +851,7 @@ local function buildStation(parent: Instance)
 
 	contentFrames.craft = buildCraftTab(content)
 	contentFrames.smelt = buildSmeltTab(content)
+	contentFrames.chest = buildChestTab(content)
 	contentFrames.upgrade = buildModTab(content, "upgrade")
 	contentFrames.enchant = buildModTab(content, "enchant")
 end
@@ -826,15 +878,10 @@ local function refreshShop()
 			}, shopList)
 			Theme.corner(row, 6)
 
-			local swatch = Theme.new("Frame", {
-				BackgroundColor3 = item.color,
-				BorderSizePixel = 0,
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -6, 0.5, 0),
-				Size = UDim2.fromOffset(24, 24),
-				ZIndex = 33,
-			}, row)
-			Theme.corner(swatch, 4)
+			local icon = Theme.itemIcon(row, 26, 33)
+			icon.AnchorPoint = Vector2.new(1, 0.5)
+			icon.Position = UDim2.new(1, -6, 0.5, 0)
+			Theme.setItemIcon(icon, entry.id)
 
 			local label = Theme.label(row, string.format("%s — %d عملة", item.name, entry.price), 13, Theme.colors.text)
 			label.Position = UDim2.fromOffset(76, 0)
@@ -962,10 +1009,12 @@ function Panels.openStation(payload: any)
 		table.insert(tabs, "upgrade")
 	elseif payload.kind == "enchant" then
 		table.insert(tabs, "enchant")
+	elseif payload.kind == "chest" then
+		tabs = { "chest", "craft" }
 	end
 
 	-- افتح مباشرة على التبويب المميّز لهذه المحطة
-	local preferred = tabs[#tabs]
+	local preferred = if payload.kind == "chest" then "chest" else tabs[#tabs]
 	activeTab = preferred
 	setAvailableTabs(tabs)
 	craftDirty = true
@@ -1001,12 +1050,10 @@ function Panels.update(dt: number)
 	if not root.Visible then return end
 
 	for i, view in slotButtons do
-		local stack = State.slots[i]
-		local isSelected = selected == i
-		view.button.BackgroundColor3 = if isSelected then Theme.colors.slotActive
-			elseif i <= Config.HOTBAR then Theme.colors.slotHover
-			else Theme.colors.slot
-		paintSlot(view, stack)
+		local state = if selected == i then "active"
+			elseif i <= Config.HOTBAR then "hover"
+			else "normal"
+		paintSlot(view, State.slots[i], state)
 	end
 
 	for slotName, view in armorButtons do
@@ -1052,6 +1099,18 @@ function Panels.update(dt: number)
 				furnaceHint.Text = string.format("يصهر %s ← %s. الفرن يعمل حتى وأنت بعيد عنه.",
 					Items.name(input.id), Items.name(smelt.out))
 			end
+		end
+
+	elseif activeTab == "chest" then
+		if stationData then
+			local slots = stationData.slots or {}
+			local used = 0
+			for i, view in chestSlots do
+				local stack = stackOf(slots[i])
+				if stack then used += 1 end
+				paintSlot(view, stack)
+			end
+			chestHint.Text = string.format("ممتلئ: %d / %d خانة", used, #chestSlots)
 		end
 
 	elseif activeTab == "upgrade" or activeTab == "enchant" then

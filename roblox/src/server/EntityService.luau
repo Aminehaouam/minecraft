@@ -49,6 +49,7 @@ export type Entity = {
 	pierce: number,
 	hitList: { [number]: boolean },
 	itemId: string?,
+	itemUpgrade: Upgrades.Upgrade?,
 	count: number,
 	pickupDelay: number,
 	boss: boolean,
@@ -99,6 +100,7 @@ local function newEntity(kind: string, typeId: string, x: number, y: number, w: 
 		pierce = 0,
 		hitList = {},
 		itemId = nil,
+		itemUpgrade = nil,
 		count = 1,
 		pickupDelay = 0,
 		boss = false,
@@ -144,12 +146,13 @@ function EntityService.bossActive(): boolean
 	return bossId ~= nil
 end
 
-function EntityService.spawnItem(x: number, y: number, itemId: string, count: number, vx: number?, vy: number?, owner: Player?): Entity?
+function EntityService.spawnItem(x: number, y: number, itemId: string, count: number, vx: number?, vy: number?, owner: Player?, upgrade: Upgrades.Upgrade?): Entity?
 	if not Items.get(itemId) or count <= 0 then return nil end
 
-	-- ادمج مع غرض قريب من النوع نفسه لتقليل عدد الكيانات
+	-- ادمج مع غرض قريب من النوع نفسه (لا ندمج المطوّر أبداً)
 	for _, other in entities do
-		if other.kind == "item" and other.itemId == itemId and not other.dead then
+		if other.kind == "item" and other.itemId == itemId and not other.dead
+			and other.itemUpgrade == nil and upgrade == nil then
 			if Util.dist2(other.body.x, other.body.y, x, y) < 9 then
 				local max = Items.maxStack(itemId)
 				if other.count + count <= max then
@@ -162,6 +165,7 @@ function EntityService.spawnItem(x: number, y: number, itemId: string, count: nu
 
 	local entity = newEntity("item", itemId, x, y, 0.7, 0.7)
 	entity.itemId = itemId
+	entity.itemUpgrade = upgrade
 	entity.count = count
 	entity.life = Config.ITEM_DESPAWN
 	entity.pickupDelay = if owner then Config.PICKUP_DELAY * 2 else Config.PICKUP_DELAY
@@ -664,7 +668,16 @@ local function updateItem(entity: Entity, dt: number)
 			if d < Config.PICKUP_RANGE then
 				local itemId = entity.itemId
 				if itemId then
-					local leftover = Inventory.add(state.slots, itemId, entity.count)
+					local leftover
+					if entity.itemUpgrade then
+						-- غرض مطوّر: يحتاج خانة كاملة ولا يندمج
+						local placed = Inventory.addStack(state.slots, {
+							id = itemId, n = entity.count, up = entity.itemUpgrade,
+						})
+						leftover = if placed then 0 else entity.count
+					else
+						leftover = Inventory.add(state.slots, itemId, entity.count)
+					end
 					local picked = entity.count - leftover
 					if picked > 0 then
 						entity.count = leftover

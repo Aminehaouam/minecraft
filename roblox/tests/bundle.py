@@ -15,6 +15,7 @@ MODULES = [
     "Util", "Noise", "Config", "Blocks", "Items", "Recipes",
     "Chunk", "WorldGen", "World", "Physics", "Mining", "Inventory",
     "Buffs", "Mobs", "Smelting", "Upgrades",
+    "Pixels", "ArtBlocks", "ArtItems", "ArtSprites", "ArtUI",
 ]
 
 STUBS = r'''

@@ -14,16 +14,69 @@ local Config = require(Shared.Config)
 local Items = require(Shared.Items)
 local Net = require(Shared.Net)
 
+local Atlas = require(script.Atlas)
 local ClientWorld = require(script.ClientWorld)
 local Controller = require(script.Controller)
 local Fx = require(script.Fx)
 local Lighting = require(script.Lighting)
+local Minimap = require(script.Minimap)
 local Renderer = require(script.Renderer)
 local Sfx = require(script.Sfx)
 local State = require(script.State)
 
 local Hud = require(script.UI.Hud)
 local Panels = require(script.UI.Panels)
+
+-- ===== شاشة التحميل =====
+-- نبني كل النقوش بكسلاً بكسلاً قبل أي شيء، ونُظهر تقدّم البناء بدل شاشة سوداء.
+
+local loadingGui = Instance.new("ScreenGui")
+loadingGui.Name = "TerraCraftLoading"
+loadingGui.IgnoreGuiInset = true
+loadingGui.ResetOnSpawn = false
+loadingGui.DisplayOrder = 50
+loadingGui.Parent = player:WaitForChild("PlayerGui")
+
+local loadingBack = Instance.new("Frame")
+loadingBack.BackgroundColor3 = Color3.fromRGB(14, 13, 20)
+loadingBack.BorderSizePixel = 0
+loadingBack.Size = UDim2.fromScale(1, 1)
+loadingBack.Parent = loadingGui
+
+local loadingTitle = Instance.new("TextLabel")
+loadingTitle.BackgroundTransparency = 1
+loadingTitle.AnchorPoint = Vector2.new(0.5, 0.5)
+loadingTitle.Position = UDim2.fromScale(0.5, 0.44)
+loadingTitle.Size = UDim2.fromOffset(600, 40)
+loadingTitle.Font = Enum.Font.GothamBold
+loadingTitle.TextSize = 26
+loadingTitle.TextColor3 = Color3.fromRGB(236, 236, 244)
+loadingTitle.Text = "جارٍ رسم عالم TerraCraft…"
+loadingTitle.Parent = loadingBack
+
+local loadingBarBack = Instance.new("Frame")
+loadingBarBack.BackgroundColor3 = Color3.fromRGB(40, 38, 52)
+loadingBarBack.BorderSizePixel = 0
+loadingBarBack.AnchorPoint = Vector2.new(0.5, 0.5)
+loadingBarBack.Position = UDim2.fromScale(0.5, 0.52)
+loadingBarBack.Size = UDim2.fromOffset(420, 18)
+loadingBarBack.Parent = loadingBack
+
+local loadingBarFill = Instance.new("Frame")
+loadingBarFill.BackgroundColor3 = Color3.fromRGB(120, 200, 140)
+loadingBarFill.BorderSizePixel = 0
+loadingBarFill.Size = UDim2.new(0, 0, 1, 0)
+loadingBarFill.Parent = loadingBarBack
+
+task.spawn(function()
+	while not Atlas.isReady() do
+		loadingBarFill.Size = UDim2.new(math.clamp(Atlas.progress(), 0, 1), 0, 1, 0)
+		task.wait(0.05)
+	end
+end)
+
+Atlas.build()
+loadingTitle.Text = "جارٍ توليد العالم…"
 
 -- ===== تهيئة الواجهة =====
 
@@ -36,6 +89,8 @@ end)
 local gui = Renderer.gui()
 Hud.build(gui)
 Panels.build(gui)
+Minimap.build(gui)
+Minimap.start()
 
 pcall(function()
 	StarterGui:SetCore("TopbarEnabled", false)
@@ -356,8 +411,19 @@ RunService.RenderStepped:Connect(function(dt)
 
 	Renderer.render(dt)
 	Fx.update(dt)
+	Minimap.update(dt)
 	Hud.update(dt)
 	Panels.update(dt)
+end)
+
+-- أخفِ شاشة التحميل بعد وصول أول بيانات عالم
+task.spawn(function()
+	local guard = 0
+	while (not State.ready or ClientWorld.pendingChunks() > 6) and guard < 600 do
+		task.wait(0.1)
+		guard += 1
+	end
+	loadingGui:Destroy()
 end)
 
 print("[TerraCraft] العميل جاهز")

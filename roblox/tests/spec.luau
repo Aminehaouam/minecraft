@@ -44,6 +44,11 @@ local Inventory = __req("Inventory")
 local Mobs = __req("Mobs")
 local Smelting = __req("Smelting")
 local Upgrades = __req("Upgrades")
+local Pixels = __req("Pixels")
+local ArtBlocks = __req("ArtBlocks")
+local ArtItems = __req("ArtItems")
+local ArtSprites = __req("ArtSprites")
+local ArtUI = __req("ArtUI")
 
 local B = Blocks.ID
 local SEED = 123456
@@ -708,6 +713,328 @@ do
 	ok(junk[1] ~= nil, "السيف نجا رغم بيانات التطوير الفاسدة")
 	eq(junk[1].up, nil, "التطوير الفاسد أُهمل")
 	eq(junk[2].up, nil, "البلاطات لا تحمل تطويراً")
+end
+
+
+-- ===== محرّك البكسل =====
+do
+	local canvas = Pixels.new(8, 8)
+	Pixels.set(canvas, 3, 4, 10, 20, 30, 200)
+	local r, g, b, a = Pixels.get(canvas, 3, 4)
+	eq(r, 10, "قناة الأحمر تُكتب وتُقرأ")
+	eq(g, 20, "قناة الأخضر")
+	eq(b, 30, "قناة الأزرق")
+	eq(a, 200, "قناة الشفافية")
+
+	-- الكتابة خارج الحدود لا تُسقط اللعبة
+	Pixels.set(canvas, -5, 99, 255, 255, 255, 255)
+	local _, _, _, outside = Pixels.get(canvas, -5, 99)
+	eq(outside, 0, "القراءة خارج الحدود تُعيد صفراً")
+
+	Pixels.fill(canvas, 0, 0, 8, 8, 100, 100, 100, 255)
+	local _, _, _, filled = Pixels.get(canvas, 7, 7)
+	eq(filled, 255, "التعبئة تغطي اللوحة")
+
+	Pixels.shadeRect(canvas, 0, 0, 4, 4, 0.5)
+	local shaded = Pixels.get(canvas, 1, 1)
+	eq(shaded, 50, "التظليل يضاعف السطوع")
+
+	-- النسخ السريع يطابق النسخ العادي
+	local src = Pixels.new(4, 4)
+	Pixels.fill(src, 0, 0, 4, 4, 11, 22, 33, 255)
+	local dstA = Pixels.new(8, 8)
+	local dstB = Pixels.new(8, 8)
+	Pixels.blit(dstA, src, 2, 2)
+	Pixels.blitFast(dstB, src, 2, 2)
+	local same = true
+	for y = 0, 7 do
+		for x = 0, 7 do
+			local ar, ag, ab, aa = Pixels.get(dstA, x, y)
+			local br, bg, bb, ba = Pixels.get(dstB, x, y)
+			if ar ~= br or ag ~= bg or ab ~= bb or aa ~= ba then same = false end
+		end
+	end
+	ok(same, "blitFast يطابق blit للمناطق المعتمة")
+
+	-- القلب الأفقي
+	local mirror = Pixels.new(4, 4)
+	Pixels.set(src, 0, 0, 250, 0, 0, 255)
+	Pixels.blitMirrored(mirror, src, 0, 0)
+	local mr = Pixels.get(mirror, 3, 0)
+	eq(mr, 250, "القلب ينقل البكسل إلى الطرف المقابل")
+end
+
+-- ===== نقوش البلاطات: لا بلاطة بلا صورة =====
+do
+	local flat, empty, tooSmall = {}, {}, {}
+
+	for blockId, block in Blocks.defs do
+		if blockId ~= B.AIR then
+			local canvas = ArtBlocks.paint(blockId, 16)
+
+			-- عدّ البكسلات المعتمة والألوان المختلفة
+			local opaque = 0
+			local colours: { [string]: boolean } = {}
+			for y = 0, 15 do
+				for x = 0, 15 do
+					local r, g, bl, a = Pixels.get(canvas, x, y)
+					if a > 40 then
+						opaque += 1
+						colours[string.format("%d,%d,%d", r // 6, g // 6, bl // 6)] = true
+					end
+				end
+			end
+
+			local colourCount = 0
+			for _ in colours do colourCount += 1 end
+
+			if opaque == 0 then
+				table.insert(empty, block.name)
+			elseif opaque < 18 then
+				table.insert(tooSmall, block.name)
+			end
+			-- نقش حقيقي لا لون مسطّح: ثلاث درجات لون على الأقل
+			if opaque > 0 and colourCount < 3 then
+				table.insert(flat, block.name)
+			end
+		end
+	end
+
+	eq(#empty, 0, "كل بلاطة لها نقش مرئي: " .. table.concat(empty, ", "))
+	eq(#tooSmall, 0, "لا نقش شبه فارغ: " .. table.concat(tooSmall, ", "))
+	eq(#flat, 0, "كل نقش متدرّج لا لون مسطّح: " .. table.concat(flat, ", "))
+end
+
+-- ===== إضاءة الحواف تولّد نسخاً مختلفة فعلاً =====
+do
+	local base = ArtBlocks.paint(B.STONE, 16)
+
+	local top = Pixels.clone(base)
+	Pixels.applyEdges(top, Pixels.EDGE_UP, 16)
+	local bottom = Pixels.clone(base)
+	Pixels.applyEdges(bottom, Pixels.EDGE_DOWN, 16)
+
+	local topR = Pixels.get(top, 8, 0)
+	local baseTopR = Pixels.get(base, 8, 0)
+	ok(topR > baseTopR, "الحافة العلوية المكشوفة تُضاء")
+
+	local bottomR = Pixels.get(bottom, 8, 15)
+	local baseBottomR = Pixels.get(base, 8, 15)
+	ok(bottomR < baseBottomR, "الحافة السفلية المكشوفة تُعتم")
+
+	-- الأقنعة الستة عشر ليست متطابقة
+	local seen: { [string]: boolean } = {}
+	for mask = 0, 15 do
+		local variant = Pixels.clone(base)
+		Pixels.applyEdges(variant, mask, 16)
+		local signature = {}
+		for i = 0, 15 do
+			table.insert(signature, tostring(Pixels.get(variant, i, 0)))
+			table.insert(signature, tostring(Pixels.get(variant, i, 15)))
+		end
+		seen[table.concat(signature, ":")] = true
+	end
+	local unique = 0
+	for _ in seen do unique += 1 end
+	ok(unique >= 4, "أقنعة الحواف تنتج نسخاً متمايزة")
+
+	ok(ArtBlocks.usesEdges(B.STONE), "الحجر يستعمل إضاءة الحواف")
+	ok(not ArtBlocks.usesEdges(B.FLOWER), "الزهرة لا تستعمل إضاءة الحواف")
+	ok(ArtBlocks.styleOf(B.STONE) == "rock", "نمط الحجر صخري")
+	ok(ArtBlocks.styleOf(B.IRON_ORE) == "ore", "نمط الخام خامي")
+end
+
+-- ===== أيقونات العناصر =====
+do
+	local empty = {}
+	for _, itemId in Items.order do
+		local canvas = ArtItems.paint(itemId, 16)
+		local opaque = 0
+		for y = 0, 15 do
+			for x = 0, 15 do
+				local _, _, _, a = Pixels.get(canvas, x, y)
+				if a > 40 then opaque += 1 end
+			end
+		end
+		if opaque < 8 then
+			table.insert(empty, itemId)
+		end
+	end
+	eq(#empty, 0, "كل عنصر له أيقونة مرئية: " .. table.concat(empty, ", "))
+
+	-- عناصر البلاطات تستعمل نقش البلاطة نفسه
+	local stoneIcon = ArtItems.paint("stone", 16)
+	local stoneTile = ArtBlocks.paint(B.STONE, 16)
+	local identical = true
+	for y = 0, 15 do
+		for x = 0, 15 do
+			local ar = Pixels.get(stoneIcon, x, y)
+			local br = Pixels.get(stoneTile, x, y)
+			if ar ~= br then identical = false end
+		end
+	end
+	ok(identical, "أيقونة البلاطة هي نقش البلاطة")
+
+	eq(ArtItems.shapeOf("iron_sword"), "sword", "السيف يأخذ شكل السيف")
+	eq(ArtItems.shapeOf("iron_pickaxe"), "pickaxe", "المعول يأخذ شكل المعول")
+	eq(ArtItems.shapeOf("iron_helm"), "armor_head", "الخوذة تأخذ شكل الخوذة")
+	eq(ArtItems.shapeOf("health_potion"), "potion", "الجرعة تأخذ شكل القارورة")
+end
+
+-- ===== نقوش الكائنات =====
+do
+	local function opaqueCount(canvas): number
+		local n = 0
+		for y = 0, canvas.h - 1 do
+			for x = 0, canvas.w - 1 do
+				local _, _, _, a = Pixels.get(canvas, x, y)
+				if a > 40 then n += 1 end
+			end
+		end
+		return n
+	end
+
+	-- اللاعب: كل الإطارات موجودة ومرئية ومتمايزة
+	local signatures: { [string]: string } = {}
+	for _, frameName in ArtSprites.PLAYER_FRAMES do
+		local canvas = ArtSprites.paintPlayer(frameName)
+		ok(opaqueCount(canvas) > 80, "إطار اللاعب مرئي: " .. frameName)
+		local parts = {}
+		for y = 0, canvas.h - 1, 3 do
+			for x = 0, canvas.w - 1, 3 do
+				local _, _, _, a = Pixels.get(canvas, x, y)
+				table.insert(parts, if a > 40 then "1" else "0")
+			end
+		end
+		signatures[frameName] = table.concat(parts)
+	end
+	ok(signatures.idle ~= signatures.walk1, "إطار المشي يختلف عن الوقوف")
+	ok(signatures.walk1 ~= signatures.walk3, "إطارا المشي متعاكسان")
+	ok(signatures.idle ~= signatures.jump, "إطار القفز مميّز")
+
+	-- الدروع طبقات رمادية (ليُلوّنها المحرّك)
+	local helmet = ArtSprites.paintHelmet("idle")
+	ok(opaqueCount(helmet) > 20, "طبقة الخوذة مرئية")
+	local hr, hg, hb = Pixels.get(helmet, ArtSprites.PLAYER_W // 2, 3)
+	ok(math.abs(hr - hg) < 12 and math.abs(hg - hb) < 12, "طبقة الخوذة رمادية قابلة للتلوين")
+
+	-- كل وحش: كل إطاراته مرئية ومتمايزة
+	local weak, same = {}, {}
+	for mobId in Mobs.defs do
+		local frames = ArtSprites.mobFrames(mobId)
+		local previous: string? = nil
+		for frame = 1, frames do
+			local canvas = ArtSprites.paintMob(mobId, frame)
+			if opaqueCount(canvas) < 20 then
+				table.insert(weak, mobId .. ":" .. frame)
+			end
+			local parts = {}
+			for y = 0, canvas.h - 1, 2 do
+				for x = 0, canvas.w - 1, 2 do
+					local _, _, _, a = Pixels.get(canvas, x, y)
+					table.insert(parts, if a > 40 then "1" else "0")
+				end
+			end
+			local signature = table.concat(parts)
+			if previous == signature then
+				table.insert(same, mobId)
+			end
+			previous = signature
+		end
+	end
+	eq(#weak, 0, "كل إطارات الوحوش مرئية: " .. table.concat(weak, ", "))
+	eq(#same, 0, "إطارات كل وحش متحرّكة فعلاً: " .. table.concat(same, ", "))
+
+	-- حجم النقش يتبع حجم صندوق الوحش
+	local w, h = ArtSprites.mobSize("zombie")
+	local def = Mobs.get("zombie")
+	eq(w, math.floor(def.w * 16 + 0.5), "عرض النقش يطابق عرض الصندوق")
+	eq(h, math.floor(def.h * 16 + 0.5), "ارتفاع النقش يطابق ارتفاع الصندوق")
+
+	-- المقذوفات
+	for projId in Mobs.projectiles do
+		ok(opaqueCount(ArtSprites.paintProjectile(projId)) > 6, "المقذوف مرئي: " .. projId)
+	end
+end
+
+-- ===== قطع الواجهة =====
+do
+	for name, painter in ArtUI.pieces do
+		local canvas = painter()
+		local opaque = 0
+		for y = 0, canvas.h - 1 do
+			for x = 0, canvas.w - 1 do
+				local _, _, _, a = Pixels.get(canvas, x, y)
+				if a > 40 then opaque += 1 end
+			end
+		end
+		ok(opaque > 10, "قطعة الواجهة مرسومة: " .. name)
+	end
+
+	-- الشطف: الحافة العليا أفتح من السفلى
+	local panel = ArtUI.panel()
+	local topR = Pixels.get(panel, 12, 1)
+	local bottomR = Pixels.get(panel, 12, ArtUI.PANEL - 2)
+	ok(topR > bottomR, "اللوحة مشطوفة: الأعلى أفتح من الأسفل")
+
+	-- التشقّق يتنامى مع المرحلة
+	local previous = 0
+	for stage = 1, 4 do
+		local crack = ArtUI.crack(stage)
+		local marks = 0
+		for y = 0, crack.h - 1 do
+			for x = 0, crack.w - 1 do
+				local _, _, _, a = Pixels.get(crack, x, y)
+				if a > 40 then marks += 1 end
+			end
+		end
+		ok(marks > previous, "مرحلة التشقّق " .. stage .. " أوسع من سابقتها")
+		previous = marks
+	end
+end
+
+-- ===== مستويات السوائل =====
+do
+	local world = World.new(SEED)
+	local x, y = 420, 60 -- في السماء: هواء مضمون
+
+	eq(World.liquidLevel(world, x, y), 0, "الهواء بلا سائل")
+
+	World.setLiquid(world, x, y, B.WATER, 5)
+	eq(World.fg(world, x, y), B.WATER, "معرّف البلاطة يبقى ماءً")
+	eq(World.liquidLevel(world, x, y), 5, "المستوى يُقرأ كما كُتب")
+
+	World.setLiquid(world, x, y, B.WATER, World.LIQUID_FULL)
+	eq(World.liquidLevel(world, x, y), World.LIQUID_FULL, "المستوى الكامل")
+
+	World.setLiquid(world, x, y, B.WATER, 99)
+	eq(World.liquidLevel(world, x, y), World.LIQUID_FULL, "المستوى مقصوص عند الحد الأقصى")
+
+	World.setLiquid(world, x, y, B.WATER, 0)
+	eq(World.fg(world, x, y), B.AIR, "المستوى صفر يزيل السائل")
+	eq(World.liquidLevel(world, x, y), 0, "لا مستوى بعد الإزالة")
+
+	-- السوائل المولّدة (بلا مستوى مخزّن) تُعدّ ممتلئة
+	World.setFg(world, x, y, B.LAVA)
+	eq(World.liquidLevel(world, x, y), World.LIQUID_FULL, "سائل التوليد ممتلئ افتراضياً")
+
+	-- المستوى لا يفسد معرّف البلاطة ولا الجدار
+	World.set(world, x, y + 1, B.STONE, B.DIRT)
+	World.setLiquid(world, x, y, B.WATER, 3)
+	eq(World.fg(world, x, y + 1), B.STONE, "البلاطة المجاورة سليمة")
+	eq(World.bg(world, x, y), B.AIR, "الجدار الخلفي لم يتأثر")
+
+	-- المزامنة تحافظ على المستوى
+	local client = World.new(SEED)
+	local cx, cy = World.chunkOf(x, y)
+	local flat = World.encodeDiff(world, cx, cy)
+	ok(flat ~= nil, "التعديل مُرمَّز")
+	World.applyEncodedDiff(client, cx, cy, flat)
+	eq(World.liquidLevel(client, x, y), 3, "المستوى ينتقل عبر الشبكة")
+
+	-- حساب الكتلة
+	World.setLiquid(world, x + 1, y, B.WATER, 4)
+	eq(World.liquidMass(world, x, y, x + 1, y), 7, "مجموع كتلة السائل صحيح")
 end
 
 -- ===== النتيجة =====

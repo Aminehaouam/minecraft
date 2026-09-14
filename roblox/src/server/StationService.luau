@@ -30,6 +30,7 @@ local Services = require(script.Parent.Services)
 local StationService = {}
 
 local USE_RANGE = 9 -- أقصى مسافة للتفاعل مع محطة
+local CHEST_SLOTS = 27 -- ثلاثة صفوف × تسع خانات
 local TICK = 0.25
 local PUSH_HZ = 5 -- تحديثات الواجهة للمشاهدين
 
@@ -45,7 +46,14 @@ export type Furnace = {
 	progressMax: number,
 }
 
+export type Chest = {
+	x: number,
+	y: number,
+	slots: Inventory.Slots,
+}
+
 local furnaces: { [string]: Furnace } = {}
+local chests: { [string]: Chest } = {}
 -- اللاعب -> المحطة المفتوحة حالياً
 local viewing: { [Player]: { x: number, y: number, kind: string } } = {}
 
@@ -68,6 +76,7 @@ end
 local function stationAt(x: number, y: number): string?
 	local world = Services.World.getWorld()
 	local block = Blocks.get(World.fg(world, x, y))
+	if block.container then return "chest" end
 	return block.station
 end
 
@@ -92,6 +101,17 @@ local function getFurnace(x: number, y: number, create: boolean?): Furnace?
 	return furnace
 end
 
+local function getChest(x: number, y: number, create: boolean?): Chest?
+	local k = key(x, y)
+	local chest = chests[k]
+	if chest then return chest end
+	if not create then return nil end
+	if stationAt(x, y) ~= "chest" then return nil end
+	chest = { x = x, y = y, slots = Inventory.new() }
+	chests[k] = chest
+	return chest
+end
+
 -- ===== إرسال الحالة =====
 
 local function buildPayload(player: Player, x: number, y: number, kind: string): any
@@ -111,6 +131,16 @@ local function buildPayload(player: Player, x: number, y: number, kind: string):
 			payload.burnMax = furnace.burnMax
 			payload.progress = math.floor(furnace.progress * 100) / 100
 			payload.progressMax = furnace.progressMax
+		end
+	elseif kind == "chest" then
+		local chest = getChest(x, y, true)
+		if chest then
+			local slots = {}
+			for i = 1, CHEST_SLOTS do
+				slots[i] = netStack(chest.slots[i])
+			end
+			payload.slots = slots
+			payload.count = CHEST_SLOTS
 		end
 	end
 
@@ -297,6 +327,94 @@ local function handleTake(player: Player, x: number, y: number, source: string)
 	StationService.markDirty(x, y)
 end
 
+-- تبادل خانة بين مخزون اللاعب والصندوق (نفس منطق تبديل المخزون)
+local function handleChestSwap(player: Player, x: number, y: number, playerSlot: number, chestSlot: number)
+	local state = Services.Player.get(player)
+	if not state or not playerNear(player, x, y) then return end
+	if stationAt(x, y) ~= "chest" then return end
+	if playerSlot < 1 or playerSlot > Config.INV_SLOTS then return end
+	if chestSlot < 1 or chestSlot > CHEST_SLOTS then return end
+
+	local chest = getChest(x, y, true)
+	if not chest then return end
+
+	local playerStack = state.slots[playerSlot]
+	local chestStack = chest.slots[chestSlot]
+
+	-- دمج الأكوام المتطابقة غير المطوّرة بدل تبديلها
+	if playerStack and chestStack and playerStack.id == chestStack.id
+		and playerStack.up == nil and chestStack.up == nil then
+		local max = Items.maxStack(playerStack.id)
+		local move = math.min(max - chestStack.n, playerStack.n)
+		if move > 0 then
+			chestStack.n += move
+			playerStack.n -= move
+			if playerStack.n <= 0 then state.slots[playerSlot] = nil end
+			Services.Player.syncInventory(player)
+			pushState(player)
+			StationService.markDirty(x, y)
+			return
+		end
+	end
+
+	state.slots[playerSlot] = chestStack
+	chest.slots[chestSlot] = playerStack
+
+	Services.Player.syncInventory(player)
+	pushState(player)
+	StationService.markDirty(x, y)
+end
+
+-- «أودِع الكل»: ينقل كل ما يماثل محتويات الصندوق من المخزون إليه
+local function handleChestDeposit(player: Player, x: number, y: number)
+	local state = Services.Player.get(player)
+	if not state or not playerNear(player, x, y) then return end
+	if stationAt(x, y) ~= "chest" then return end
+	local chest = getChest(x, y, true)
+	if not chest then return end
+
+	local moved = 0
+	for i = Config.HOTBAR + 1, Config.INV_SLOTS do
+		local stack = state.slots[i]
+		if stack and stack.up == nil then
+			local emptied = false
+			for j = 1, CHEST_SLOTS do
+				local target = chest.slots[j]
+				if target and target.id == stack.id and target.up == nil then
+					local space = Items.maxStack(stack.id) - target.n
+					local move = math.min(space, stack.n)
+					if move > 0 then
+						target.n += move
+						stack.n -= move
+						moved += move
+						if stack.n <= 0 then
+							state.slots[i] = nil
+							emptied = true
+							break
+						end
+					end
+				end
+			end
+			if not emptied and state.slots[i] then
+				for j = 1, CHEST_SLOTS do
+					if not chest.slots[j] then
+						chest.slots[j] = state.slots[i]
+						moved += 1
+						state.slots[i] = nil
+						break
+					end
+				end
+			end
+		end
+	end
+
+	if moved > 0 then
+		Services.Player.syncInventory(player)
+		pushState(player)
+		StationService.markDirty(x, y)
+	end
+end
+
 -- ===== التطوير والسحر =====
 
 local function payCost(state: any, cost: Upgrades.Cost): boolean
@@ -389,12 +507,26 @@ end
 function StationService.onBlockRemoved(x: number, y: number)
 	local k = key(x, y)
 	local furnace = furnaces[k]
-	if not furnace then return end
-	furnaces[k] = nil
+	local chest = chests[k]
+	if not furnace and not chest then return end
 
-	for _, stack in { furnace.input, furnace.fuel, furnace.output } do
-		if stack then
-			Services.Entity.spawnItem(x + 0.5, y + 0.5, stack.id, stack.n)
+	if furnace then
+		furnaces[k] = nil
+		for _, stack in { furnace.input, furnace.fuel, furnace.output } do
+			if stack then
+				Services.Entity.spawnItem(x + 0.5, y + 0.5, stack.id, stack.n)
+			end
+		end
+	end
+
+	if chest then
+		chests[k] = nil
+		for i = 1, CHEST_SLOTS do
+			local stack = chest.slots[i]
+			if stack then
+				local upgrade = if stack.up then { lvl = stack.up.lvl, aff = stack.up.aff } else nil
+				Services.Entity.spawnItem(x + 0.5, y + 0.5, stack.id, stack.n, nil, nil, nil, upgrade)
+			end
 		end
 	end
 
@@ -456,6 +588,7 @@ function StationService.exportRegion(rx: number, ry: number): { [string]: any }?
 		if furnace.x >= minX and furnace.x <= maxX and furnace.y >= minY and furnace.y <= maxY then
 			if furnace.input or furnace.fuel or furnace.output or furnace.burn > 0 then
 				out[k] = {
+					t = "f",
 					i = serializeStack(furnace.input),
 					f = serializeStack(furnace.fuel),
 					o = serializeStack(furnace.output),
@@ -463,6 +596,22 @@ function StationService.exportRegion(rx: number, ry: number): { [string]: any }?
 					bm = math.floor(furnace.burnMax),
 					p = math.floor(furnace.progress * 10) / 10,
 				}
+				any = true
+			end
+		end
+	end
+
+	for k, chest in chests do
+		if chest.x >= minX and chest.x <= maxX and chest.y >= minY and chest.y <= maxY then
+			local packed = {}
+			for i = 1, CHEST_SLOTS do
+				local stack = chest.slots[i]
+				if stack then
+					table.insert(packed, { i, serializeStack(stack) })
+				end
+			end
+			if #packed > 0 then
+				out[k] = { t = "c", s = packed }
 				any = true
 			end
 		end
@@ -478,16 +627,30 @@ function StationService.importRegion(data: any)
 			local parts = string.split(k, ",")
 			local x, y = tonumber(parts[1]), tonumber(parts[2])
 			if x and y then
-				furnaces[k] = {
-					x = x, y = y,
-					input = deserializeStack(entry.i),
-					fuel = deserializeStack(entry.f),
-					output = deserializeStack(entry.o),
-					burn = tonumber(entry.b) or 0,
-					burnMax = tonumber(entry.bm) or 0,
-					progress = tonumber(entry.p) or 0,
-					progressMax = 0,
-				}
+				if entry.t == "c" then
+					local slots = Inventory.new()
+					if type(entry.s) == "table" then
+						for _, pair in entry.s do
+							local index = tonumber(pair[1])
+							local stack = deserializeStack(pair[2])
+							if index and stack and index >= 1 and index <= CHEST_SLOTS then
+								slots[index] = stack
+							end
+						end
+					end
+					chests[k] = { x = x, y = y, slots = slots }
+				else
+					furnaces[k] = {
+						x = x, y = y,
+						input = deserializeStack(entry.i),
+						fuel = deserializeStack(entry.f),
+						output = deserializeStack(entry.o),
+						burn = tonumber(entry.b) or 0,
+						burnMax = tonumber(entry.bm) or 0,
+						progress = tonumber(entry.p) or 0,
+						progressMax = 0,
+					}
+				end
 			end
 		end
 	end
@@ -506,6 +669,9 @@ local function handleOpen(player: Player, x: number, y: number)
 	viewing[player] = { x = x, y = y, kind = kind }
 	if kind == "furnace" then
 		getFurnace(x, y, true)
+	elseif kind == "chest" then
+		getChest(x, y, true)
+		Net.get("Fx"):FireAllClients({ kind = "chest_open", x = x + 0.5, y = y + 0.5 })
 	end
 	pushState(player)
 end
@@ -538,6 +704,12 @@ function StationService.start()
 			if type(a) == "number" then
 				handleEnchant(player, x, y, math.floor(a))
 			end
+		elseif action == "chest_swap" then
+			if type(a) == "number" and type(b) == "number" then
+				handleChestSwap(player, x, y, math.floor(a), math.floor(b))
+			end
+		elseif action == "chest_deposit" then
+			handleChestDeposit(player, x, y)
 		end
 	end)
 
@@ -593,5 +765,13 @@ function StationService.furnaceCount(): number
 	for _ in furnaces do n += 1 end
 	return n
 end
+
+function StationService.chestCount(): number
+	local n = 0
+	for _ in chests do n += 1 end
+	return n
+end
+
+StationService.CHEST_SLOTS = CHEST_SLOTS
 
 return StationService

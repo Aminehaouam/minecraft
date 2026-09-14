@@ -498,12 +498,13 @@ local function handleInvAction(player: Player, action: string, a: any, b: any)
 		if not stack then return end
 		local amount = if b == "all" then stack.n else 1
 		local id = stack.id
+		local upgrade = if stack.up then { lvl = stack.up.lvl, aff = stack.up.aff } else nil
 		local taken = Inventory.removeFromSlot(state.slots, a, amount)
 		if taken > 0 then
 			Services.Entity.spawnItem(
 				state.body.x + state.facing * 1.2,
 				state.body.y - 0.5,
-				id, taken, state.facing * 7, -6, player
+				id, taken, state.facing * 7, -6, player, upgrade
 			)
 			PlayerService.syncInventory(player)
 		end

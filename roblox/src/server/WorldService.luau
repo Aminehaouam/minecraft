@@ -207,22 +207,65 @@ function WorldService.checkSupport(x: number, y: number)
 end
 
 -- ===== محاكاة السوائل =====
--- تدفّق محافظ على الكتلة: السائل يهبط، وينزلق جانباً فقط إن وجد منفذاً للهبوط.
--- هذا يمنع التكاثر اللانهائي للماء ويبقى رخيصاً حسابياً.
+--[[
+	سائل بمستويات حقيقية (1..8) محفوظ في البتّات العليا من معرّف البلاطة.
+	القواعد ثلاث فقط، وهي كافية لسلوك مقنع:
+	  1. السائل يهبط إلى ما تحته حتى يمتلئ.
+	  2. إن لم يستطع الهبوط، يتسوّى أفقياً مع جاره الأقل منه.
+	  3. الماء + الحمم = سبج.
+	الكتلة محفوظة تماماً: كل وحدة تُنقل تُطرح من مصدرها وتُضاف لهدفها،
+	فلا يتكاثر الماء ولا يتبخّر (هناك اختبار يتحقق من ذلك).
+]]
 
 function WorldService.wakeLiquid(x: number, y: number)
 	if not World.inBounds(x, y) then return end
 	local key = x .. "," .. y
 	if liquidQueue[key] then return end
-	local id = World.fg(world, x, y)
-	if not Blocks.isLiquid(id) then return end
+	if not Blocks.isLiquid(World.fg(world, x, y)) then return end
 	liquidQueue[key] = true
 	table.insert(liquidOrder, { x, y })
 end
 
+-- كتابة سائل عبر المسار الرسمي حتى يُبثّ ويُحفظ
+local function setLiquidTile(x: number, y: number, id: number, level: number)
+	local bg = World.bg(world, x, y)
+	if level <= 0 then
+		WorldService.setTile(x, y, B.AIR, bg)
+		return
+	end
+	local clamped = math.min(math.floor(level), World.LIQUID_FULL)
+	WorldService.setTile(x, y, id + bit32.lshift(clamped, World.LIQUID_SHIFT), bg)
+end
+
+WorldService.setLiquidTile = setLiquidTile
+
+local function obsidianAt(x: number, y: number)
+	WorldService.setTile(x, y, B.OBSIDIAN, World.bg(world, x, y))
+end
+
+-- يحاول تحويل التقاء الماء بالحمم إلى سبج؛ يُعيد true إن حدث تفاعل
+local function reactLiquids(x: number, y: number, id: number): boolean
+	for _, offset in { { 0, 1 }, { 0, -1 }, { -1, 0 }, { 1, 0 } } do
+		local nx, ny = x + offset[1], y + offset[2]
+		local other = World.fg(world, nx, ny)
+		if Blocks.isLiquid(other) and other ~= id then
+			-- الحمم هي التي تتصلّب، والماء يتبخّر عند نقطة التماس
+			if id == B.LAVA then
+				obsidianAt(x, y)
+			else
+				obsidianAt(nx, ny)
+				setLiquidTile(x, y, id, 0)
+			end
+			return true
+		end
+	end
+	return false
+end
+
 local function stepLiquids()
-	local budget = 260
+	local budget = 300
 	local processed = 0
+
 	while processed < budget and #liquidOrder > 0 do
 		local cell = table.remove(liquidOrder, 1)
 		if not cell then break end
@@ -231,39 +274,61 @@ local function stepLiquids()
 		processed += 1
 
 		local id = World.fg(world, x, y)
-		if Blocks.isLiquid(id) then
-			local belowId = World.fg(world, x, y + 1)
+		if not Blocks.isLiquid(id) then continue end
 
-			-- ماء + حمم = سبج
-			if id == B.WATER and belowId == B.LAVA then
-				WorldService.setTile(x, y, B.AIR, World.bg(world, x, y))
-				WorldService.setTile(x, y + 1, B.OBSIDIAN, World.bg(world, x, y + 1))
+		local level = World.liquidLevel(world, x, y)
+		if level <= 0 then
+			setLiquidTile(x, y, id, 0)
+			continue
+		end
+
+		if reactLiquids(x, y, id) then continue end
+
+		-- 1) الهبوط
+		local belowId = World.fg(world, x, y + 1)
+		if belowId == id then
+			local belowLevel = World.liquidLevel(world, x, y + 1)
+			if belowLevel < World.LIQUID_FULL then
+				local move = math.min(level, World.LIQUID_FULL - belowLevel)
+				setLiquidTile(x, y + 1, id, belowLevel + move)
+				setLiquidTile(x, y, id, level - move)
 				continue
 			end
-			if id == B.LAVA and belowId == B.WATER then
-				WorldService.setTile(x, y, B.AIR, World.bg(world, x, y))
-				WorldService.setTile(x, y + 1, B.OBSIDIAN, World.bg(world, x, y + 1))
-				continue
+		elseif Blocks.isReplaceable(belowId) and not Blocks.isLiquid(belowId) then
+			setLiquidTile(x, y + 1, id, level)
+			setLiquidTile(x, y, id, 0)
+			continue
+		end
+
+		-- 2) التسوية الأفقية (وحدة أو أكثر نحو الجار الأقل)
+		local dirs: { number } = if math.random() < 0.5 then { -1, 1 } else { 1, -1 }
+		local remaining = level
+		for _, dx in dirs do
+			if remaining <= 1 then break end
+			local sideId = World.fg(world, x + dx, y)
+			local sideLevel = 0
+			local canFlow = false
+
+			if sideId == id then
+				sideLevel = World.liquidLevel(world, x + dx, y)
+				canFlow = sideLevel < remaining - 1
+			elseif Blocks.isReplaceable(sideId) and not Blocks.isLiquid(sideId) then
+				canFlow = true
 			end
 
-			if Blocks.isReplaceable(belowId) and belowId ~= id and not Blocks.isLiquid(belowId) then
-				-- اهبط
-				WorldService.setTile(x, y, B.AIR, World.bg(world, x, y))
-				WorldService.setTile(x, y + 1, id, World.bg(world, x, y + 1))
-			else
-				-- انزلق جانباً نحو منفذ هبوط
-				local dirs: { number } = if math.random() < 0.5 then { -1, 1 } else { 1, -1 }
-				for _, dx in dirs do
-					local sideId = World.fg(world, x + dx, y)
-					local sideBelow = World.fg(world, x + dx, y + 1)
-					if Blocks.isReplaceable(sideId) and not Blocks.isLiquid(sideId)
-						and Blocks.isReplaceable(sideBelow) and not Blocks.isLiquid(sideBelow) then
-						WorldService.setTile(x, y, B.AIR, World.bg(world, x, y))
-						WorldService.setTile(x + dx, y, id, World.bg(world, x + dx, y))
-						break
-					end
+			if canFlow then
+				local gap = remaining - sideLevel
+				local move = math.max(1, gap // 3)
+				move = math.min(move, remaining - 1, World.LIQUID_FULL - sideLevel)
+				if move > 0 then
+					setLiquidTile(x + dx, y, id, sideLevel + move)
+					remaining -= move
 				end
 			end
+		end
+
+		if remaining ~= level then
+			setLiquidTile(x, y, id, remaining)
 		end
 	end
 end

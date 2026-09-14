@@ -68,8 +68,8 @@ local function acquireText(): TextLabel
 	label = Instance.new("TextLabel")
 	label.BackgroundTransparency = 1
 	label.AnchorPoint = Vector2.new(0.5, 0.5)
-	label.Font = Enum.Font.GothamBold
-	label.TextStrokeTransparency = 0.25
+	label.Font = Enum.Font.Arcade -- أرقام بخط بكسلي يطابق أسلوب اللعبة
+	label.TextStrokeTransparency = 0.15
 	label.ZIndex = 12
 	label.Size = UDim2.fromOffset(140, 26)
 	label.Parent = Renderer.fxLayer()
@@ -228,6 +228,8 @@ function Fx.handle(payload: any)
 		Fx.pickup(payload.x, payload.y, payload.item, payload.count)
 	elseif kind == "swing" then
 		if payload.player ~= State.userId then return end
+	elseif kind == "chest_open" then
+		Fx.burst(payload.x, payload.y, Color3.fromRGB(200, 160, 90), 6, 4, 0.35)
 	elseif kind == "upgrade" then
 		Fx.burst(payload.x, payload.y - 1, Color3.fromRGB(250, 205, 110), 22, 8, 0.7, -4)
 		Fx.text(payload.x, payload.y - 2, "تمّ التطوير!", Color3.fromRGB(250, 210, 110), 20)

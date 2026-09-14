@@ -17,6 +17,16 @@ local B = Blocks.ID
 local World = {}
 World.__index = World
 
+--[[
+	مستوى السائل يُخزَّن في البتّات العليا من نفس الحقل u16:
+	    القيمة = معرّف البلاطة | (المستوى << 12)
+	معرّفات البلاطات أقل من 4096 بكثير، فالبتّات 12..15 فارغة.
+	الفائدة: ماء بمستويات حقيقية بلا توسيع صيغة التخزين ولا صيغة الحفظ.
+]]
+World.BLOCK_MASK = 0xFFF
+World.LIQUID_SHIFT = 12
+World.LIQUID_FULL = 8
+
 export type Diff = { [number]: number } -- index -> fg + bg*65536
 export type World = typeof(setmetatable({} :: {
 	seed: number,
@@ -135,7 +145,19 @@ function World.fgRaw(self: World, x: number, y: number): number?
 	if not World.inBounds(x, y) then return B.BEDROCK end
 	local data = World.getChunk(self, x // SIZE, y // SIZE, false)
 	if not data then return nil end
-	return Chunk.getFg(data, Chunk.index(x % SIZE, y % SIZE))
+	return bit32.band(Chunk.getFg(data, Chunk.index(x % SIZE, y % SIZE)), World.BLOCK_MASK)
+end
+
+-- مستوى السائل بلا إجبار على التوليد (للرسم)
+function World.liquidLevelRaw(self: World, x: number, y: number): number
+	if not World.inBounds(x, y) then return 0 end
+	local data = World.getChunk(self, x // SIZE, y // SIZE, false)
+	if not data then return 0 end
+	local packed = Chunk.getFg(data, Chunk.index(x % SIZE, y % SIZE))
+	local id = bit32.band(packed, World.BLOCK_MASK)
+	if not Blocks.isLiquid(id) then return 0 end
+	local level = bit32.rshift(packed, World.LIQUID_SHIFT)
+	return if level == 0 then World.LIQUID_FULL else math.min(level, World.LIQUID_FULL)
 end
 
 function World.bgRaw(self: World, x: number, y: number): number?
@@ -149,7 +171,36 @@ function World.fg(self: World, x: number, y: number): number
 	if not World.inBounds(x, y) then return B.BEDROCK end
 	local data = World.getChunk(self, x // SIZE, y // SIZE)
 	if not data then return B.BEDROCK end
+	return bit32.band(Chunk.getFg(data, Chunk.index(x % SIZE, y % SIZE)), World.BLOCK_MASK)
+end
+
+-- القيمة الخام بما فيها مستوى السائل
+function World.fgPacked(self: World, x: number, y: number): number
+	if not World.inBounds(x, y) then return B.BEDROCK end
+	local data = World.getChunk(self, x // SIZE, y // SIZE)
+	if not data then return B.BEDROCK end
 	return Chunk.getFg(data, Chunk.index(x % SIZE, y % SIZE))
+end
+
+-- مستوى السائل 0..8 (8 = بلاطة ممتلئة). غير السوائل تُعيد 0.
+function World.liquidLevel(self: World, x: number, y: number): number
+	local packed = World.fgPacked(self, x, y)
+	local id = bit32.band(packed, World.BLOCK_MASK)
+	if not Blocks.isLiquid(id) then return 0 end
+	local level = bit32.rshift(packed, World.LIQUID_SHIFT)
+	-- المستوى 0 يعني «مولَّد من التضاريس» أي ممتلئ
+	return if level == 0 then World.LIQUID_FULL else math.min(level, World.LIQUID_FULL)
+end
+
+-- كتابة سائل بمستوى محدّد؛ المستوى 0 يزيل السائل
+function World.setLiquid(self: World, x: number, y: number, id: number, level: number)
+	local bg = World.bg(self, x, y)
+	if level <= 0 then
+		World.set(self, x, y, B.AIR, bg)
+		return
+	end
+	local clamped = math.min(math.floor(level), World.LIQUID_FULL)
+	World.set(self, x, y, id + bit32.lshift(clamped, World.LIQUID_SHIFT), bg)
 end
 
 function World.bg(self: World, x: number, y: number): number
@@ -187,6 +238,17 @@ end
 
 function World.setFg(self: World, x: number, y: number, id: number)
 	World.set(self, x, y, id, World.bg(self, x, y))
+end
+
+-- الكتلة الإجمالية للسائل في بلاطة (تُستعمل في اختبارات الحفاظ على الكتلة)
+function World.liquidMass(self: World, x0: number, y0: number, x1: number, y1: number): number
+	local total = 0
+	for y = y0, y1 do
+		for x = x0, x1 do
+			total += World.liquidLevel(self, x, y)
+		end
+	end
+	return total
 end
 
 function World.setBg(self: World, x: number, y: number, id: number)

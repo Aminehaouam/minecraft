@@ -1,11 +1,16 @@
 --!strict
 --[[
-	Renderer — محرك الرسم ثنائي الأبعاد.
+	Renderer — محرّك الرسم البكسلي.
 
-	الفكرة الأساسية للأداء: شبكة ثابتة من الإطارات تُعاد تدويرها (torus mapping).
-	الإطار في الموضع (tx % cols, ty % rows) يرسم دائماً البلاطة (tx, ty)،
-	وتُحرَّك الحاوية كلها مع الكاميرا. النتيجة: تمرير سلس بلا إنشاء/حذف إطارات،
-	وتحديث خصائص فقط عند تغيّر المحتوى أو الإضاءة.
+	كل بلاطة صارت ImageLabel تشير إلى مستطيل داخل أطلس النقوش، مع
+	ResamplerMode.Pixelated فتبقى البكسلات حادّة مهما كان الزوم.
+
+	ثلاث أفكار تحمل الأداء كله:
+	1. شبكة ثابتة من الإطارات تُعاد تدويرها (torus mapping): التمرير يحرّك
+	   الحاوية ويحدّث عموداً واحداً فقط بدل إعادة بناء كل شيء.
+	2. ذاكرة لكل خانة: لا نكتب أي خاصية إن لم يتغيّر شيء فعلياً.
+	3. قناع الحواف (auto-tiling): نختار من 16 نسخة مخبوزة مسبقاً حسب الجيران
+	   المكشوفين، فنحصل على حواف مضاءة كتيراريا بلا أي كلفة وقت تشغيل.
 ]]
 
 local Players = game:GetService("Players")
@@ -14,13 +19,16 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Blocks = require(Shared.Blocks)
 local Config = require(Shared.Config)
 local Mobs = require(Shared.Mobs)
+local Pixels = require(Shared.Pixels)
+local Upgrades = require(Shared.Upgrades)
 local Util = require(Shared.Util)
 local World = require(Shared.World)
 local WorldGen = require(Shared.WorldGen)
 
+local Atlas = require(script.Parent.Atlas)
 local ClientWorld = require(script.Parent.ClientWorld)
+local EntitySprites = require(script.Parent.EntitySprites)
 local Lighting = require(script.Parent.Lighting)
-local Sprites = require(script.Parent.Sprites)
 local State = require(script.Parent.State)
 
 local Renderer = {}
@@ -41,34 +49,39 @@ local entityContainer: Frame
 local fxContainer: Frame
 
 type Slot = {
-	wall: Frame,
-	fg: Frame,
+	wall: ImageLabel,
+	fg: ImageLabel,
 	tx: number,
 	ty: number,
 	lastFg: number,
 	lastBg: number,
+	lastMask: number,
 	lastLight: number,
+	lastLevel: number,
 }
 
 local slots: { Slot } = {}
 local cols, rows = 0, 0
-local tilePx = 40
+local tilePx = 48
 local viewW, viewH = 0, 0
 local shakeTime, shakeMagnitude = 0, 0
 
 local stars: { Frame } = {}
-local clouds: { Frame } = {}
+local clouds: { { Frame } } = {}
 local hillBarsFar: { Frame } = {}
 local hillBarsNear: { Frame } = {}
 
--- تجمّعات الكيانات
-local charSprites: { [number]: Sprites.Character } = {}
-local mobSprites: { [number]: Sprites.MobSprite } = {}
-local itemSprites: { [number]: Sprites.ItemSprite } = {}
-local projSprites: { [number]: Sprites.ProjSprite } = {}
-local localCharacter: Sprites.Character
-local miningOverlay: Frame
+local charSprites: { [number]: EntitySprites.Character } = {}
+local mobSprites: { [number]: EntitySprites.MobSprite } = {}
+local itemSprites: { [number]: EntitySprites.ItemSprite } = {}
+local projSprites: { [number]: EntitySprites.ProjSprite } = {}
+local localCharacter: EntitySprites.Character
+local crackOverlay: ImageLabel
 local selectionBox: Frame
+local crackStage = 0
+
+local UNLOADED = -1
+local UNLOADED_COLOR = Color3.fromRGB(10, 10, 14)
 
 -- ===== إنشاء الواجهة =====
 
@@ -103,27 +116,35 @@ local function buildSky(parent: Instance)
 		star.BorderSizePixel = 0
 		star.BackgroundColor3 = Color3.fromRGB(255, 255, 245)
 		star.AnchorPoint = Vector2.new(0.5, 0.5)
-		star.Size = UDim2.fromOffset(2, 2)
+		star.Size = UDim2.fromOffset(if i % 5 == 0 then 3 else 2, if i % 5 == 0 then 3 else 2)
 		star.Position = UDim2.fromScale(math.random(), math.random() * 0.65)
 		star.ZIndex = 2
 		star.Parent = starsFolder
 		table.insert(stars, star)
 	end
 
+	-- الشمس/القمر: مربّع بكسلي بزوايا مقضومة بدل دائرة ناعمة
 	celestial = Instance.new("Frame")
 	celestial.Name = "Sun"
 	celestial.BorderSizePixel = 0
 	celestial.AnchorPoint = Vector2.new(0.5, 0.5)
-	celestial.Size = UDim2.fromOffset(74, 74)
+	celestial.Size = UDim2.fromOffset(64, 64)
 	celestial.BackgroundColor3 = Color3.fromRGB(255, 240, 190)
 	celestial.ZIndex = 3
 	celestial.Parent = parent
-	local sunCorner = Instance.new("UICorner")
-	sunCorner.CornerRadius = UDim.new(0.5, 0)
-	sunCorner.Parent = celestial
+	for _, corner in { Vector2.new(0, 0), Vector2.new(1, 0), Vector2.new(0, 1), Vector2.new(1, 1) } do
+		local notch = Instance.new("Frame")
+		notch.BorderSizePixel = 0
+		notch.BackgroundTransparency = 1
+		notch.Size = UDim2.fromScale(0.18, 0.18)
+		notch.AnchorPoint = corner
+		notch.Position = UDim2.fromScale(corner.X, corner.Y)
+		notch.ZIndex = 4
+		notch.Parent = celestial
+	end
 
 	hillsFar = makeFrame(parent, "HillsFar", 4)
-	for i = 1, 40 do
+	for _ = 1, 40 do
 		local bar = Instance.new("Frame")
 		bar.BorderSizePixel = 0
 		bar.AnchorPoint = Vector2.new(0.5, 1)
@@ -134,7 +155,7 @@ local function buildSky(parent: Instance)
 	end
 
 	hillsNear = makeFrame(parent, "HillsNear", 5)
-	for i = 1, 40 do
+	for _ = 1, 40 do
 		local bar = Instance.new("Frame")
 		bar.BorderSizePixel = 0
 		bar.AnchorPoint = Vector2.new(0.5, 1)
@@ -144,19 +165,21 @@ local function buildSky(parent: Instance)
 		table.insert(hillBarsNear, bar)
 	end
 
+	-- سحب بكسلية: ثلاث كتل متداخلة لكل سحابة (بلا زوايا دائرية)
 	cloudFolder = makeFrame(parent, "Clouds", 6)
-	for i = 1, 16 do
-		local cloud = Instance.new("Frame")
-		cloud.BorderSizePixel = 0
-		cloud.AnchorPoint = Vector2.new(0.5, 0.5)
-		cloud.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-		cloud.BackgroundTransparency = 0.15
-		cloud.ZIndex = 6
-		cloud.Parent = cloudFolder
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0.5, 0)
-		corner.Parent = cloud
-		table.insert(clouds, cloud)
+	for _ = 1, 14 do
+		local parts: { Frame } = {}
+		for k = 1, 3 do
+			local part = Instance.new("Frame")
+			part.BorderSizePixel = 0
+			part.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			part.BackgroundTransparency = 0.12
+			part.AnchorPoint = Vector2.new(0.5, 0.5)
+			part.ZIndex = 6
+			part.Parent = cloudFolder
+			table.insert(parts, part)
+		end
+		table.insert(clouds, parts)
 	end
 end
 
@@ -167,42 +190,39 @@ local function buildTileGrid()
 	end
 	table.clear(slots)
 
-	tilePx = math.max(16, math.floor(viewH / Config.TILES_ON_SCREEN_Y))
+	-- حجم البلاطة مضاعف صحيح لدقة الفن (16) فتبقى البكسلات مربّعة تماماً
+	local raw = viewH / Config.TILES_ON_SCREEN_Y
+	local scale = math.max(2, math.floor(raw / Atlas.TILE + 0.5))
+	tilePx = scale * Atlas.TILE
 	State.tilePx = tilePx
-	cols = math.ceil(viewW / tilePx) + Config.RENDER_PAD * 2
-	rows = Config.TILES_ON_SCREEN_Y + Config.RENDER_PAD * 2
 
-	for i = 1, cols * rows do
-		local wall = Instance.new("Frame")
+	cols = math.ceil(viewW / tilePx) + Config.RENDER_PAD * 2
+	rows = math.ceil(viewH / tilePx) + Config.RENDER_PAD * 2
+
+	for _ = 1, cols * rows do
+		local wall = Instance.new("ImageLabel")
 		wall.BorderSizePixel = 0
-		wall.Size = UDim2.fromOffset(tilePx + 1, tilePx + 1)
 		wall.BackgroundColor3 = Color3.new(0, 0, 0)
 		wall.BackgroundTransparency = 1
+		wall.ImageTransparency = 1
+		wall.Size = UDim2.fromOffset(tilePx, tilePx)
 		wall.ZIndex = 2
 		wall.Parent = tileContainer
+		Atlas.apply(wall, "tiles")
 
-		local fg = Instance.new("Frame")
+		local fg = Instance.new("ImageLabel")
 		fg.BorderSizePixel = 0
-		fg.Size = UDim2.fromOffset(tilePx + 1, tilePx + 1)
-		fg.BackgroundColor3 = Color3.new(0, 0, 0)
 		fg.BackgroundTransparency = 1
+		fg.Size = UDim2.fromOffset(tilePx, tilePx)
+		fg.Visible = false
 		fg.ZIndex = 3
 		fg.Parent = tileContainer
-
-		-- تدرّج خفيف يعطي إحساس الإضاءة العلوية (بلا أي صور)
-		local gradient = Instance.new("UIGradient")
-		gradient.Rotation = 90
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-			ColorSequenceKeypoint.new(0.18, Color3.fromRGB(238, 238, 238)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(188, 188, 188)),
-		})
-		gradient.Parent = fg
+		Atlas.apply(fg, "tiles")
 
 		table.insert(slots, {
 			wall = wall, fg = fg,
 			tx = -99999, ty = -99999,
-			lastFg = -1, lastBg = -1, lastLight = -1,
+			lastFg = -2, lastBg = -2, lastMask = -1, lastLight = -1, lastLevel = -1,
 		})
 	end
 
@@ -217,11 +237,10 @@ function Renderer.init()
 	gui.IgnoreGuiInset = true
 	gui.ResetOnSpawn = false
 	gui.DisplayOrder = 10
-	-- خاصية حديثة نسبياً: نتجاهلها بهدوء على الإصدارات الأقدم من المحرّك
+	gui.Parent = playerGui
 	pcall(function()
 		gui.ScreenInsets = Enum.ScreenInsets.None
 	end)
-	gui.Parent = playerGui
 
 	buildSky(gui)
 
@@ -254,31 +273,27 @@ function Renderer.init()
 	fxContainer.ZIndex = 9
 	fxContainer.Parent = worldRoot
 
-	-- مؤشر البلاطة المستهدفة
 	selectionBox = Instance.new("Frame")
 	selectionBox.BackgroundTransparency = 1
 	selectionBox.BorderSizePixel = 0
-	selectionBox.AnchorPoint = Vector2.new(0, 0)
 	selectionBox.ZIndex = 8
 	selectionBox.Visible = false
 	selectionBox.Parent = tileContainer
-	local selStroke = Instance.new("UIStroke")
-	selStroke.Color = Color3.fromRGB(255, 255, 255)
-	selStroke.Thickness = 2
-	selStroke.Transparency = 0.25
-	selStroke.Parent = selectionBox
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(255, 255, 255)
+	stroke.Thickness = 2
+	stroke.Transparency = 0.25
+	stroke.Parent = selectionBox
 
-	-- تراكب تقدّم التعدين
-	miningOverlay = Instance.new("Frame")
-	miningOverlay.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	miningOverlay.BackgroundTransparency = 0.55
-	miningOverlay.BorderSizePixel = 0
-	miningOverlay.AnchorPoint = Vector2.new(0, 1)
-	miningOverlay.ZIndex = 8
-	miningOverlay.Visible = false
-	miningOverlay.Parent = tileContainer
+	crackOverlay = Instance.new("ImageLabel")
+	crackOverlay.BackgroundTransparency = 1
+	crackOverlay.BorderSizePixel = 0
+	crackOverlay.ZIndex = 8
+	crackOverlay.Visible = false
+	crackOverlay.Parent = tileContainer
+	Atlas.applyUI(crackOverlay, "crack1")
 
-	localCharacter = Sprites.newCharacter(entityContainer, false)
+	localCharacter = EntitySprites.newCharacter(entityContainer, false)
 
 	local camera = workspace.CurrentCamera
 	while not camera do
@@ -293,29 +308,18 @@ function Renderer.init()
 		buildTileGrid()
 	end)
 
-	-- كاميرا Roblox معطّلة تماماً: اللعبة كلها واجهة
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.CFrame = CFrame.new(0, 5000, 0)
 end
 
-function Renderer.gui(): ScreenGui
-	return gui
-end
-
-function Renderer.fxLayer(): Frame
-	return fxContainer
-end
-
-function Renderer.tileSize(): number
-	return tilePx
-end
+function Renderer.gui(): ScreenGui return gui end
+function Renderer.fxLayer(): Frame return fxContainer end
+function Renderer.tileSize(): number return tilePx end
 
 function Renderer.shake(magnitude: number, duration: number)
 	shakeMagnitude = math.max(shakeMagnitude, magnitude)
 	shakeTime = math.max(shakeTime, duration)
 end
-
--- ===== تحويل الإحداثيات =====
 
 function Renderer.worldToScreen(x: number, y: number): (number, number)
 	return (x - State.camX) * tilePx + viewW / 2, (y - State.camY) * tilePx + viewH / 2
@@ -336,33 +340,32 @@ local DUSK_BOTTOM = Color3.fromRGB(232, 140, 88)
 local BLOOD_TOP = Color3.fromRGB(52, 6, 10)
 local BLOOD_BOTTOM = Color3.fromRGB(150, 32, 34)
 
+local function sunAmount(t: number): number
+	if t >= 0.27 and t <= 0.73 then return 1 end
+	if t > 0.73 and t < Config.NIGHT_FROM then
+		return 1 - (t - 0.73) / (Config.NIGHT_FROM - 0.73)
+	end
+	if t > Config.NIGHT_TO and t < 0.27 then
+		return (t - Config.NIGHT_TO) / (0.27 - Config.NIGHT_TO)
+	end
+	return 0
+end
+Renderer.sunAmount = sunAmount
+
 local function updateSky()
 	local t = State.time
-	local topColor, bottomColor
-
-	local sun = 0
-	if t >= 0.27 and t <= 0.73 then
-		sun = 1
-	elseif t > 0.73 and t < Config.NIGHT_FROM then
-		sun = 1 - (t - 0.73) / (Config.NIGHT_FROM - 0.73)
-	elseif t > Config.NIGHT_TO and t < 0.27 then
-		sun = (t - Config.NIGHT_TO) / (0.27 - Config.NIGHT_TO)
-	end
-
+	local sun = sunAmount(t)
 	local duskness = 1 - math.abs(sun * 2 - 1)
 	if sun >= 0.999 then duskness = 0 end
 
-	topColor = NIGHT_TOP:Lerp(DAY_TOP, sun)
-	bottomColor = NIGHT_BOTTOM:Lerp(DAY_BOTTOM, sun)
-	topColor = topColor:Lerp(DUSK_TOP, duskness * 0.7)
-	bottomColor = bottomColor:Lerp(DUSK_BOTTOM, duskness * 0.8)
+	local topColor = NIGHT_TOP:Lerp(DAY_TOP, sun):Lerp(DUSK_TOP, duskness * 0.7)
+	local bottomColor = NIGHT_BOTTOM:Lerp(DAY_BOTTOM, sun):Lerp(DUSK_BOTTOM, duskness * 0.8)
 
 	if State.bloodMoon then
 		topColor = topColor:Lerp(BLOOD_TOP, 0.75)
 		bottomColor = bottomColor:Lerp(BLOOD_BOTTOM, 0.65)
 	end
 
-	-- تحت الأرض: خلفية كهفية تعتم مع العمق
 	local depth = State.camY - Config.SURFACE
 	if depth > 0 then
 		local blend = math.clamp(depth / 90, 0, 1)
@@ -378,168 +381,175 @@ local function updateSky()
 
 	skyGradient.Color = ColorSequence.new(topColor, bottomColor)
 
-	-- النجوم
 	local starAlpha = math.clamp(1 - sun * 1.6, 0, 1) * math.clamp(1 - math.max(0, depth) / 40, 0, 1)
 	starsFolder.Visible = starAlpha > 0.02
 	if starsFolder.Visible then
 		for i, star in stars do
-			local twinkle = 0.3 + 0.7 * math.abs(math.sin(os.clock() * 1.4 + i))
+			local twinkle = 0.35 + 0.65 * math.abs(math.sin(os.clock() * 1.3 + i))
 			star.BackgroundTransparency = 1 - starAlpha * twinkle
 		end
 	end
 
-	-- الشمس/القمر على قوس
 	local aboveGround = depth < 30
 	celestial.Visible = aboveGround
 	if aboveGround then
 		local angle = (t - 0.25) * math.pi * 2
-		local cx = 0.5 + math.cos(angle - math.pi / 2) * 0.42
-		local cy = 0.62 - math.sin(angle) * 0.5
-		celestial.Position = UDim2.fromScale(cx, cy)
+		celestial.Position = UDim2.fromScale(
+			0.5 + math.cos(angle - math.pi / 2) * 0.42,
+			0.62 - math.sin(angle) * 0.5)
 		if sun > 0.35 then
 			celestial.BackgroundColor3 = Color3.fromRGB(255, 242, 196)
-			celestial.Size = UDim2.fromOffset(78, 78)
+			celestial.Size = UDim2.fromOffset(72, 72)
 		else
 			celestial.BackgroundColor3 = if State.bloodMoon
 				then Color3.fromRGB(228, 70, 64)
 				else Color3.fromRGB(226, 230, 240)
-			celestial.Size = UDim2.fromOffset(58, 58)
+			celestial.Size = UDim2.fromOffset(56, 56)
 		end
 		celestial.BackgroundTransparency = math.clamp(math.max(0, depth) / 30, 0, 1)
 	end
 
-	-- السحب (منظور متحرك)
 	cloudFolder.Visible = aboveGround
 	if aboveGround then
-		local drift = os.clock() * 6
-		for i, cloud in clouds do
-			local seedX = i * 137.5
-			local baseX = ((seedX + drift - State.camX * tilePx * 0.12) % (viewW + 600)) - 300
-			local sizeX = 90 + (i % 5) * 55
-			local sizeY = 26 + (i % 3) * 12
-			cloud.Size = UDim2.fromOffset(sizeX, sizeY)
-			cloud.Position = UDim2.fromOffset(baseX, 60 + (i % 6) * 46 - State.camY * tilePx * 0.06 + Config.SURFACE * tilePx * 0.06)
-			cloud.BackgroundTransparency = 0.15 + math.clamp(math.max(0, depth) / 30, 0, 0.85)
-			cloud.BackgroundColor3 = Color3.fromRGB(255, 255, 255):Lerp(bottomColor, 1 - sun * 0.8)
+		local drift = os.clock() * 5
+		local fade = 0.12 + math.clamp(math.max(0, depth) / 30, 0, 0.88)
+		local tint = Color3.fromRGB(255, 255, 255):Lerp(bottomColor, 1 - sun * 0.75)
+		for i, parts in clouds do
+			local seedX = i * 151.3
+			local baseX = ((seedX + drift - State.camX * tilePx * 0.1) % (viewW + 520)) - 260
+			local baseY = 54 + (i % 5) * 52 - State.camY * tilePx * 0.05 + Config.SURFACE * tilePx * 0.05
+			local unit = 18 + (i % 3) * 8
+			-- ثلاث كتل مستطيلة تكوّن سحابة بكسلية
+			local layout = {
+				{ dx = 0, dy = 0, w = unit * 3, h = unit },
+				{ dx = -unit * 0.6, dy = -unit * 0.6, w = unit * 1.6, h = unit * 0.9 },
+				{ dx = unit * 0.8, dy = -unit * 0.45, w = unit * 1.3, h = unit * 0.8 },
+			}
+			for k, part in parts do
+				local spec = layout[k]
+				part.Size = UDim2.fromOffset(spec.w, spec.h)
+				part.Position = UDim2.fromOffset(baseX + spec.dx, baseY + spec.dy)
+				part.BackgroundTransparency = fade
+				part.BackgroundColor3 = tint
+			end
 		end
 	end
 
-	-- التلال البعيدة
 	local showHills = depth < 24
 	hillsFar.Visible = showHills
 	hillsNear.Visible = showHills
 	if showHills then
 		local seed = State.seed
+		local fade = math.clamp(math.max(0, depth) / 24, 0, 1)
 		for i, bar in hillBarsFar do
 			local worldX = State.camX * 0.35 + (i - 20) * 7
 			local h = WorldGen.surfaceHeight(seed, math.floor(worldX) % Config.WORLD_W)
 			local screenY = viewH / 2 + (h - State.camY) * tilePx * 0.35 + 60
-			bar.Size = UDim2.fromOffset(viewW / 18 + 4, math.max(10, viewH - screenY + 200))
-			bar.Position = UDim2.fromOffset((i - 1) * (viewW / 18) - (State.camX * tilePx * 0.12) % (viewW / 18) * 2, screenY + 200)
+			bar.Size = UDim2.fromOffset(viewW / 18 + 4, math.max(10, viewH - screenY + 240))
+			bar.Position = UDim2.fromOffset((i - 1) * (viewW / 18), screenY + 240)
 			bar.BackgroundColor3 = Color3.fromRGB(56, 78, 96):Lerp(bottomColor, 0.55)
-			bar.BackgroundTransparency = math.clamp(math.max(0, depth) / 24, 0, 1)
+			bar.BackgroundTransparency = fade
 		end
 		for i, bar in hillBarsNear do
 			local worldX = State.camX * 0.6 + (i - 20) * 5
 			local h = WorldGen.surfaceHeight(seed, math.floor(worldX) % Config.WORLD_W)
 			local screenY = viewH / 2 + (h - State.camY) * tilePx * 0.6 + 30
-			bar.Size = UDim2.fromOffset(viewW / 24 + 4, math.max(10, viewH - screenY + 200))
-			bar.Position = UDim2.fromOffset((i - 1) * (viewW / 24) - (State.camX * tilePx * 0.28) % (viewW / 24) * 2, screenY + 200)
+			bar.Size = UDim2.fromOffset(viewW / 24 + 4, math.max(10, viewH - screenY + 240))
+			bar.Position = UDim2.fromOffset((i - 1) * (viewW / 24), screenY + 240)
 			bar.BackgroundColor3 = Color3.fromRGB(38, 58, 68):Lerp(bottomColor, 0.35)
-			bar.BackgroundTransparency = math.clamp(math.max(0, depth) / 24, 0, 1)
+			bar.BackgroundTransparency = fade
 		end
 	end
 end
 
 -- ===== البلاطات =====
 
-local UNLOADED = -1
-local UNLOADED_COLOR = Color3.fromRGB(12, 12, 16)
+-- قناع الجيران المكشوفين: يحدّد أي نسخة من النقش نستعمل
+local function edgeMask(world: World.World, tx: number, ty: number, blockId: number): number
+	local mask = 0
+	local function exposed(nx: number, ny: number): boolean
+		local neighbour = World.fgRaw(world, nx, ny)
+		if neighbour == nil then return false end
+		if neighbour == blockId then return false end
+		return not Blocks.isSolid(neighbour)
+	end
+	if exposed(tx, ty - 1) then mask += Pixels.EDGE_UP end
+	if exposed(tx + 1, ty) then mask += Pixels.EDGE_RIGHT end
+	if exposed(tx, ty + 1) then mask += Pixels.EDGE_DOWN end
+	if exposed(tx - 1, ty) then mask += Pixels.EDGE_LEFT end
+	return mask
+end
 
-local function applyTile(slot: Slot, tx: number, ty: number, fgId: number, bgId: number, light: number)
-	local fgFrame = slot.fg
-	local wallFrame = slot.wall
+local function applyTile(slot: Slot, tx: number, ty: number, fgId: number, bgId: number, mask: number, light: number, level: number)
+	local wall = slot.wall
+	local fg = slot.fg
 
-	-- قطعة لم تُولَّد بعد: ارسمها كظلام صلب بدل ثقب في العالم
 	if fgId == UNLOADED then
-		wallFrame.BackgroundTransparency = 0
-		wallFrame.BackgroundColor3 = UNLOADED_COLOR
-		fgFrame.Visible = false
+		wall.ImageTransparency = 1
+		wall.BackgroundTransparency = 0
+		wall.BackgroundColor3 = UNLOADED_COLOR
+		fg.Visible = false
 		return
 	end
 
-	-- الجدار الخلفي / الظلمة
+	-- تنويع خفيف في السطوع لكسر تكرار الشبكة
+	local jitter = 0.94 + Util.rand2(tx, ty, 917) * 0.12
+
+	-- ===== الجدار الخلفي أو الظلمة =====
 	if bgId ~= 0 then
-		local wallBlock = Blocks.get(bgId)
-		local variation = (Util.rand2(tx, ty, 77) - 0.5) * (wallBlock.shade / 255) * 0.7
-		local base = wallBlock.color
-		local factor = light * 0.5
-		wallFrame.BackgroundTransparency = 0
-		wallFrame.BackgroundColor3 = Color3.new(
-			math.clamp((base.R + variation) * factor, 0, 1),
-			math.clamp((base.G + variation) * factor, 0, 1),
-			math.clamp((base.B + variation) * factor, 0, 1)
-		)
+		wall.BackgroundTransparency = 1
+		wall.ImageTransparency = 0
+		Atlas.setRect(wall, Atlas.tileRect(bgId, 0))
+		local shade = light * 0.46 * jitter
+		wall.ImageColor3 = Color3.new(shade, shade, shade)
 	else
-		-- هواء بلا جدار: ارسم الظلمة فقط
+		wall.ImageTransparency = 1
 		if light >= 0.985 then
-			wallFrame.BackgroundTransparency = 1
+			wall.BackgroundTransparency = 1
 		else
-			wallFrame.BackgroundColor3 = Color3.new(0, 0, 0)
-			wallFrame.BackgroundTransparency = light
+			wall.BackgroundColor3 = Color3.new(0, 0, 0)
+			wall.BackgroundTransparency = light
 		end
 	end
 
-	-- الطبقة الأمامية
+	-- ===== الطبقة الأمامية =====
 	if fgId == 0 then
-		fgFrame.Visible = false
+		fg.Visible = false
 		return
 	end
 
 	local block = Blocks.get(fgId)
-	fgFrame.Visible = true
+	fg.Visible = true
+	Atlas.setRect(fg, Atlas.tileRect(fgId, mask))
 
-	local variation = (Util.rand2(tx, ty, 33) - 0.5) * (block.shade / 255) * 2
 	local emissive = block.light / Config.MAX_LIGHT
-	local factor = math.min(1, light + emissive * 0.8)
-	local base = block.color
-	fgFrame.BackgroundColor3 = Color3.new(
-		math.clamp((base.R + variation) * factor, 0, 1),
-		math.clamp((base.G + variation) * factor, 0, 1),
-		math.clamp((base.B + variation) * factor, 0, 1)
-	)
+	local tint = math.min(1, light + emissive * 0.85) * jitter
+	fg.ImageColor3 = Color3.new(tint, tint, tint)
 
-	-- أشكال خاصة
+	-- أشكال خاصة: سائل بارتفاع جزئي حسب مستواه، منصة رقيقة، نباتات
 	if block.liquid then
-		fgFrame.Size = UDim2.fromOffset(tilePx + 1, tilePx * 0.92)
-		fgFrame.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx + tilePx * 0.08)
-		fgFrame.BackgroundTransparency = 0.28
+		-- نقصّ النقش من أسفله بقدر المستوى فيبدو سطح السائل في مكانه الصحيح
+		local rows = math.clamp(math.floor(level / 8 * Atlas.TILE + 0.5), 2, Atlas.TILE)
+		local scale = tilePx // Atlas.TILE
+		local rect = Atlas.tileRect(fgId, 0)
+		fg.ImageRectOffset = Vector2.new(rect.x, rect.y + (Atlas.TILE - rows))
+		fg.ImageRectSize = Vector2.new(Atlas.TILE, rows)
+		fg.Size = UDim2.fromOffset(tilePx, rows * scale)
+		fg.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx + (Atlas.TILE - rows) * scale)
+		fg.ImageTransparency = if fgId == Blocks.ID.LAVA then 0 else 0.12
 	elseif block.platform then
-		fgFrame.Size = UDim2.fromOffset(tilePx + 1, math.max(3, tilePx * 0.22))
-		fgFrame.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx)
-		fgFrame.BackgroundTransparency = 0
-	elseif fgId == Blocks.ID.TORCH or fgId == Blocks.ID.LANTERN then
-		fgFrame.Size = UDim2.fromOffset(math.max(4, tilePx * 0.24), tilePx * 0.62)
-		fgFrame.Position = UDim2.fromOffset(tx * tilePx + tilePx * 0.38, ty * tilePx + tilePx * 0.2)
-		fgFrame.BackgroundTransparency = 0
-	elseif block.fragile or fgId == Blocks.ID.VINE then
-		fgFrame.Size = UDim2.fromOffset(tilePx * 0.7, tilePx * 0.7)
-		fgFrame.Position = UDim2.fromOffset(tx * tilePx + tilePx * 0.15, ty * tilePx + tilePx * 0.3)
-		fgFrame.BackgroundTransparency = 0.05
-	elseif block.station or block.container then
-		fgFrame.Size = UDim2.fromOffset(tilePx + 1, tilePx * 0.85)
-		fgFrame.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx + tilePx * 0.15)
-		fgFrame.BackgroundTransparency = 0
+		fg.Size = UDim2.fromOffset(tilePx, tilePx // 4)
+		fg.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx)
+		fg.ImageRectSize = Vector2.new(Atlas.TILE, Atlas.TILE // 4)
+		fg.ImageTransparency = 0
 	else
-		fgFrame.Size = UDim2.fromOffset(tilePx + 1, tilePx + 1)
-		fgFrame.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx)
-		fgFrame.BackgroundTransparency = 0
+		fg.Size = UDim2.fromOffset(tilePx, tilePx)
+		fg.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx)
+		fg.ImageTransparency = 0
 	end
 end
 
-local tileAccumulator = 1 -- يفرض حساب إضاءة في أول إطار
-
-local function renderTiles(force: boolean)
+local function renderTiles()
 	local world = ClientWorld.get()
 	local halfW = viewW / tilePx / 2
 	local halfH = viewH / tilePx / 2
@@ -557,21 +567,35 @@ local function renderTiles(force: boolean)
 				local fgId, bgId
 				if World.inBounds(tx, ty) then
 					fgId = World.fgRaw(world, tx, ty) or UNLOADED
-					bgId = World.bgRaw(world, tx, ty) or Blocks.ID.AIR
+					bgId = World.bgRaw(world, tx, ty) or 0
 				else
 					fgId, bgId = Blocks.ID.BEDROCK, Blocks.ID.BEDROCK
 				end
+
+				local mask = 0
+				if fgId > 0 and fgId ~= UNLOADED and Blocks.isSolid(fgId) then
+					mask = edgeMask(world, tx, ty, fgId)
+				end
+
+				local level = 0
+				if fgId ~= UNLOADED and Blocks.isLiquid(fgId) then
+					level = World.liquidLevelRaw(world, tx, ty)
+				end
+
 				local light = if fgId == UNLOADED then 0 else Lighting.factor(tx, ty)
-				local quantized = math.floor(light * 48)
+				local quantized = math.floor(light * 40)
 
 				local moved = slot.tx ~= tx or slot.ty ~= ty
-				if moved or force or slot.lastFg ~= fgId or slot.lastBg ~= bgId or slot.lastLight ~= quantized then
+				if moved or slot.lastFg ~= fgId or slot.lastBg ~= bgId
+					or slot.lastMask ~= mask or slot.lastLight ~= quantized
+					or slot.lastLevel ~= level then
 					slot.tx, slot.ty = tx, ty
-					slot.lastFg, slot.lastBg, slot.lastLight = fgId, bgId, quantized
+					slot.lastFg, slot.lastBg = fgId, bgId
+					slot.lastMask, slot.lastLight, slot.lastLevel = mask, quantized, level
 					if moved then
 						slot.wall.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx)
 					end
-					applyTile(slot, tx, ty, fgId, bgId, light)
+					applyTile(slot, tx, ty, fgId, bgId, mask, light, level)
 				end
 			end
 		end
@@ -582,28 +606,16 @@ end
 
 local function releaseSprites(seen: { [number]: boolean })
 	for id, sprite in charSprites do
-		if not seen[id] then
-			sprite.root:Destroy()
-			charSprites[id] = nil
-		end
+		if not seen[id] then sprite.root:Destroy(); charSprites[id] = nil end
 	end
 	for id, sprite in mobSprites do
-		if not seen[id] then
-			sprite.root:Destroy()
-			mobSprites[id] = nil
-		end
+		if not seen[id] then sprite.root:Destroy(); mobSprites[id] = nil end
 	end
 	for id, sprite in itemSprites do
-		if not seen[id] then
-			sprite.root:Destroy()
-			itemSprites[id] = nil
-		end
+		if not seen[id] then sprite.root:Destroy(); itemSprites[id] = nil end
 	end
 	for id, sprite in projSprites do
-		if not seen[id] then
-			sprite.root:Destroy()
-			projSprites[id] = nil
-		end
+		if not seen[id] then sprite.root:Destroy(); projSprites[id] = nil end
 	end
 end
 
@@ -616,70 +628,68 @@ local function renderEntities()
 		local x = entity.rx or entity.x
 		local y = entity.ry or entity.y
 
-		if entity.k == 1 then -- وحش
+		if entity.k == 1 then
 			local sprite = mobSprites[id]
 			if not sprite then
-				sprite = Sprites.newMob(entityContainer)
+				sprite = EntitySprites.newMob(entityContainer)
 				mobSprites[id] = sprite
 			end
 			local def = Mobs.get(entity.t)
 			local w = if def then def.w else 1
 			local h = if def then def.h else 1
 			sprite.root.Position = UDim2.fromOffset(x * tilePx, y * tilePx)
-			Sprites.updateMob(sprite, entity.t, w * tilePx, h * tilePx, entity.f or 1, entity.a or "idle", now, entity.h or 100)
+			EntitySprites.updateMob(sprite, entity.t, w * tilePx, h * tilePx,
+				entity.f or 1, entity.a or "idle", now + id * 0.37, entity.h or 100)
 
-		elseif entity.k == 2 then -- غرض
+		elseif entity.k == 2 then
 			local sprite = itemSprites[id]
 			if not sprite then
-				sprite = Sprites.newItem(entityContainer)
+				sprite = EntitySprites.newItem(entityContainer)
 				itemSprites[id] = sprite
 			end
 			sprite.root.Position = UDim2.fromOffset(x * tilePx, y * tilePx)
-			Sprites.updateItem(sprite, entity.t, entity.n or 1, tilePx * 0.8, now + id)
+			EntitySprites.updateItem(sprite, entity.t, entity.n or 1, tilePx * 0.85, now + id)
 
-		elseif entity.k == 3 then -- مقذوف
+		elseif entity.k == 3 then
 			local sprite = projSprites[id]
 			if not sprite then
-				sprite = Sprites.newProjectile(entityContainer)
+				sprite = EntitySprites.newProjectile(entityContainer)
 				projSprites[id] = sprite
 			end
 			local def = Mobs.projectiles[entity.t]
-			local w = if def then def.w else 0.5
-			local h = if def then def.h else 0.5
+			local scale = if def then math.max(def.w, def.h) else 0.6
 			local angle = math.deg(math.atan2(entity.vy or 0, entity.vx or 1))
 			sprite.root.Position = UDim2.fromOffset(x * tilePx, y * tilePx)
-			Sprites.updateProjectile(sprite, entity.t, w * tilePx, math.max(3, h * tilePx), angle, now)
+			EntitySprites.updateProjectile(sprite, entity.t, math.max(12, scale * tilePx * 1.6), angle)
 		end
 	end
 
-	-- اللاعبون الآخرون
 	for userId, peer in State.peers do
 		if userId ~= State.userId then
 			seen[-userId] = true
 			local sprite = charSprites[-userId]
 			if not sprite then
-				sprite = Sprites.newCharacter(entityContainer, true)
+				sprite = EntitySprites.newCharacter(entityContainer, true)
 				charSprites[-userId] = sprite
 			end
 			local px = peer.rx or peer.x
 			local py = peer.ry or peer.y
+			local pxW = Config.PLAYER_W * tilePx
+			local pxH = Config.PLAYER_H * tilePx
 			sprite.root.Position = UDim2.fromOffset(px * tilePx, py * tilePx)
 			sprite.root.Visible = not peer.d
 			sprite.nameTag.Text = peer.n or "لاعب"
-			sprite.nameTag.Position = UDim2.fromOffset(Config.PLAYER_W * tilePx / 2, -6)
+			sprite.nameTag.Position = UDim2.fromOffset(pxW / 2, -14)
 			sprite.nameTag.Size = UDim2.fromOffset(180, 18)
-			Sprites.updateCharacter(
-				sprite, Config.PLAYER_W * tilePx, Config.PLAYER_H * tilePx,
-				peer.f or 1, if math.abs((peer.vx or 0)) > 0.5 then "walk" else "idle",
-				now, peer.hd, peer.ch, peer.it, 0
-			)
+			EntitySprites.updateCharacter(sprite, pxW, pxH, peer.f or 1,
+				if math.abs(peer.vx or 0) > 0.5 then "walk" else "idle",
+				now, peer.hd, peer.ch, peer.it, 0, peer.iu)
+			EntitySprites.setCharacterHealth(sprite, pxW, pxH, peer.hp or 100)
 		end
 	end
 
 	releaseSprites(seen)
 end
-
--- ===== اللاعب المحلي =====
 
 local function renderLocalPlayer()
 	local body = State.body
@@ -687,14 +697,13 @@ local function renderLocalPlayer()
 	localCharacter.root.Position = UDim2.fromOffset(body.x * tilePx, body.y * tilePx)
 
 	local swing = 0
-	local lastSwing = State.lastSwing or 0
-	local since = os.clock() - lastSwing
+	local since = os.clock() - (State.lastSwing or 0)
 	if since < 0.22 then
 		swing = math.sin(since / 0.22 * math.pi)
 	end
 
 	local held = State.heldItem()
-	Sprites.updateCharacter(
+	EntitySprites.updateCharacter(
 		localCharacter,
 		Config.PLAYER_W * tilePx,
 		Config.PLAYER_H * tilePx,
@@ -704,11 +713,12 @@ local function renderLocalPlayer()
 		if State.armor.head then (State.armor.head :: any).id else nil,
 		if State.armor.chest then (State.armor.chest :: any).id else nil,
 		if held then held.id else nil,
-		swing
+		swing,
+		Upgrades.isModified(held)
 	)
 end
 
--- ===== مؤشر الاستهداف =====
+-- ===== المؤشرات =====
 
 function Renderer.setSelection(tx: number?, ty: number?, valid: boolean)
 	if not tx or not ty then
@@ -724,40 +734,43 @@ function Renderer.setSelection(tx: number?, ty: number?, valid: boolean)
 	end
 end
 
+-- تقدّم التعدين يُعرض كتشقّق متنامٍ فوق البلاطة (بدل شريط)
 function Renderer.setMiningProgress(tx: number?, ty: number?, progress: number)
-	if not tx or not ty or progress <= 0 then
-		miningOverlay.Visible = false
+	if not tx or not ty or progress <= 0.02 then
+		crackOverlay.Visible = false
 		return
 	end
-	miningOverlay.Visible = true
-	miningOverlay.Size = UDim2.fromOffset(tilePx, tilePx * math.clamp(progress, 0, 1))
-	miningOverlay.Position = UDim2.fromOffset(tx * tilePx, (ty + 1) * tilePx)
+	local stage = math.clamp(math.ceil(progress * 4), 1, 4)
+	crackOverlay.Visible = true
+	crackOverlay.Size = UDim2.fromOffset(tilePx, tilePx)
+	crackOverlay.Position = UDim2.fromOffset(tx * tilePx, ty * tilePx)
+	if crackStage ~= stage then
+		crackStage = stage
+		Atlas.applyUI(crackOverlay, "crack" .. stage)
+	end
 end
 
 -- ===== الكاميرا والحلقة =====
 
 local function updateCamera(dt: number)
 	local body = State.body
-	local targetX = body.x
-	local targetY = body.y - 1
-
-	-- ابقَ داخل حدود العالم
 	local halfW = viewW / tilePx / 2
 	local halfH = viewH / tilePx / 2
-	targetX = math.clamp(targetX, halfW, Config.WORLD_W - halfW)
-	targetY = math.clamp(targetY, halfH, Config.WORLD_H - halfH)
+	local targetX = math.clamp(body.x, halfW, Config.WORLD_W - halfW)
+	local targetY = math.clamp(body.y - 1, halfH, Config.WORLD_H - halfH)
 
 	State.camX = Util.damp(State.camX, targetX, Config.CAMERA_SMOOTH, dt)
 	State.camY = Util.damp(State.camY, targetY, Config.CAMERA_SMOOTH, dt)
 end
 
+local lightAccumulator = 1
+
 function Renderer.render(dt: number)
-	if not ClientWorld.isReady() then return end
+	if not ClientWorld.isReady() or not Atlas.isReady() then return end
 
 	updateCamera(dt)
 	updateSky()
 
-	-- اهتزاز الشاشة
 	local shakeX, shakeY = 0, 0
 	if shakeTime > 0 then
 		shakeTime -= dt
@@ -767,6 +780,7 @@ function Renderer.render(dt: number)
 		if shakeTime <= 0 then shakeMagnitude = 0 end
 	end
 
+	-- تثبيت الإزاحة على بكسلات صحيحة يمنع اهتزاز النقوش
 	local offsetX = math.floor(-State.camX * tilePx + viewW / 2 + shakeX)
 	local offsetY = math.floor(-State.camY * tilePx + viewH / 2 + shakeY)
 	local offset = UDim2.fromOffset(offsetX, offsetY)
@@ -774,16 +788,14 @@ function Renderer.render(dt: number)
 	entityContainer.Position = offset
 	fxContainer.Position = offset
 
-	-- الإضاءة (بمعدل محدود)
-	tileAccumulator += dt
+	lightAccumulator += dt
 	local lightStep = 1 / Config.LIGHT_HZ
-	if tileAccumulator >= lightStep then
-		tileAccumulator -= lightStep
-		local world = ClientWorld.get()
-		Lighting.recompute(world, State.camX, State.camY, cols, rows)
+	if lightAccumulator >= lightStep then
+		lightAccumulator = 0
+		Lighting.recompute(ClientWorld.get(), State.camX, State.camY, cols, rows)
 	end
 
-	renderTiles(false)
+	renderTiles()
 	renderEntities()
 	renderLocalPlayer()
 end

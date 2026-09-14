@@ -31,7 +31,7 @@ local coinLabel: TextLabel
 local buffRow: Frame
 local buffIcons: { Frame } = {}
 local buffSignature = ""
-local hotbarSlots: { { root: TextButton, swatch: Frame, count: TextLabel, key: TextLabel, glow: UIStroke } } = {}
+local hotbarSlots: { { slot: Theme.Slot, icon: ImageLabel, count: TextLabel, key: TextLabel, glow: UIStroke } } = {}
 local hotbarName: TextLabel
 local bossFrame: Frame
 local bossBar: Theme.Bar
@@ -135,61 +135,43 @@ local function buildHotbar(parent: Instance)
 	hotbarName.Font = Theme.fontBold
 
 	for i = 1, Config.HOTBAR do
-		local button = Theme.new("TextButton", {
-			BackgroundColor3 = Theme.colors.slot,
-			BackgroundTransparency = 0.15,
-			BorderSizePixel = 0,
-			Text = "",
-			AutoButtonColor = false,
-			Size = UDim2.fromOffset(slotSize, slotSize),
-			Position = UDim2.fromOffset((i - 1) * (slotSize + gap), 20),
-			ZIndex = 31,
-		}, box)
-		Theme.corner(button, 8)
-		local glow = Theme.stroke(button, Color3.fromRGB(10, 10, 14), 2)
+		local slot = Theme.slotButton(box, slotSize, UDim2.fromOffset((i - 1) * (slotSize + gap), 20))
+		local glow = Theme.stroke(slot.button, Color3.fromRGB(10, 10, 14), 2)
+		glow.Transparency = 1
 
-		local swatch = Theme.new("Frame", {
-			BackgroundColor3 = Color3.fromRGB(200, 200, 200),
-			BorderSizePixel = 0,
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.45),
-			Size = UDim2.fromOffset(30, 30),
-			Visible = false,
-			ZIndex = 32,
-		}, button)
-		Theme.corner(swatch, 5)
+		local icon = Theme.itemIcon(slot.button, math.floor(slotSize * 0.66), 33)
 
 		local count = Theme.new("TextLabel", {
 			BackgroundTransparency = 1,
-			Font = Theme.fontBold,
+			Font = Theme.fontNumber,
 			Text = "",
 			TextSize = 13,
 			TextColor3 = Color3.fromRGB(255, 255, 255),
-			TextStrokeTransparency = 0.3,
+			TextStrokeTransparency = 0.2,
 			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -4, 1, -2),
+			Position = UDim2.new(1, -3, 1, -1),
 			Size = UDim2.fromOffset(40, 16),
 			TextXAlignment = Enum.TextXAlignment.Right,
-			ZIndex = 33,
-		}, button)
+			ZIndex = 34,
+		}, slot.button)
 
 		local key = Theme.new("TextLabel", {
 			BackgroundTransparency = 1,
-			Font = Theme.font,
+			Font = Theme.fontNumber,
 			Text = tostring(i % 10),
 			TextSize = 11,
 			TextColor3 = Theme.colors.textDim,
 			Position = UDim2.fromOffset(4, 2),
 			Size = UDim2.fromOffset(16, 14),
 			TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 33,
-		}, button)
+			ZIndex = 34,
+		}, slot.button)
 
-		button.MouseButton1Click:Connect(function()
+		slot.button.MouseButton1Click:Connect(function()
 			if onHotbarSelect then onHotbarSelect(i) end
 		end)
 
-		table.insert(hotbarSlots, { root = button, swatch = swatch, count = count, key = key, glow = glow })
+		table.insert(hotbarSlots, { slot = slot, icon = icon, count = count, key = key, glow = glow })
 	end
 end
 
@@ -398,7 +380,7 @@ function Hud.update(dt: number)
 					Name = buff.id,
 					BackgroundColor3 = def.color,
 					BorderSizePixel = 0,
-					Size = UDim2.fromOffset(24, 24),
+					Size = UDim2.fromOffset(26, 26),
 					ZIndex = 31,
 				}, buffRow)
 				Theme.corner(icon, 5)
@@ -406,7 +388,7 @@ function Hud.update(dt: number)
 				Theme.new("TextLabel", {
 					Name = "Timer",
 					BackgroundTransparency = 1,
-					Font = Theme.fontBold,
+					Font = Theme.fontNumber,
 					Text = "",
 					TextSize = 10,
 					TextColor3 = Color3.fromRGB(20, 20, 24),
@@ -428,29 +410,24 @@ function Hud.update(dt: number)
 	end
 
 	-- شريط الأدوات
-	for i, slot in hotbarSlots do
+	for i, entry in hotbarSlots do
 		local stack = State.slots[i]
-		local selected = i == State.hotbar
-		slot.root.BackgroundColor3 = if selected then Theme.colors.slotActive else Theme.colors.slot
-		slot.root.BackgroundTransparency = if selected then 0.05 else 0.25
+		Theme.setSlotState(entry.slot, if i == State.hotbar then "active" else "normal")
 		if stack then
-			local item = Items.get(stack.id)
-			slot.swatch.Visible = true
-			slot.swatch.BackgroundColor3 = if item then item.color else Color3.fromRGB(200, 200, 200)
-			slot.count.Text = if stack.n > 1 then tostring(stack.n) else ""
-			-- إطار متوهج للأغراض المطوّرة أو المسحورة
+			Theme.setItemIcon(entry.icon, stack.id)
+			entry.count.Text = if stack.n > 1 then tostring(stack.n) else ""
+			-- توهّج حول الأغراض المطوّرة أو المسحورة
 			if Upgrades.isModified(stack) then
-				slot.glow.Color = Upgrades.displayColor(stack)
-				slot.glow.Thickness = 2.5
+				entry.glow.Color = Upgrades.displayColor(stack)
+				entry.glow.Thickness = 2
+				entry.glow.Transparency = 0.15
 			else
-				slot.glow.Color = Color3.fromRGB(10, 10, 14)
-				slot.glow.Thickness = 2
+				entry.glow.Transparency = 1
 			end
 		else
-			slot.swatch.Visible = false
-			slot.count.Text = ""
-			slot.glow.Color = Color3.fromRGB(10, 10, 14)
-			slot.glow.Thickness = 2
+			Theme.setItemIcon(entry.icon, nil)
+			entry.count.Text = ""
+			entry.glow.Transparency = 1
 		end
 	end
 
